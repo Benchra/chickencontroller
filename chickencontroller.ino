@@ -174,6 +174,23 @@ void loop() {
       }
     }
     /* BACK BARRIER END*/
+
+    /* START BARRIER BREAKING LOGIC TREE */
+    /* BARRIER TRAVERSING (ACTION NEEDED)*/
+    //UP - UP, DOWN - UP, DOWN - DOWN, UP - DOWN
+    
+    //UP - UP, UP - DOWN, DOWN - DOWN, DOWN - UP
+    
+    //UP - UP, UP - DOWN, DOWN - DOWN, UP - DOWN
+    
+    //UP - UP, DOWN - UP, DOWN - DOWN, DOWN - UP
+
+    /*BARRIER TOUCHING (NO ACTION NEEDED)*/
+    //UP - UP, DOWN - UP, UP - UP
+    
+    //UP - UP, UP - DOWN, UP - UP
+    
+    /* END BARRIER BREAKING LOGIC TREE */
     
   lcd.setCursor(0,0);
   //lcd.print(millis()/1000);      // display seconds elapsed since power-up
@@ -196,7 +213,7 @@ int read_LCD_buttons()
 {
  adc_key_in = analogRead(0);      // read the value from the sensor 
  // add approx 50 to those values
- //Serial.println(adc_key_in);
+ Serial.println(adc_key_in);
  if (adc_key_in > 1000) return btnNONE; // We make this the 1st option for speed reasons since it will be the most likely result
  //V1.1 threshold
  /*
@@ -208,8 +225,8 @@ int read_LCD_buttons()
   */
 
  //Manually read triggervalues for buttons, then added 50
- if (adc_key_in < 75)   return btnRIGHT;  
- if (adc_key_in < 160)  return btnUP; 
+ if (adc_key_in < 120)   return btnRIGHT;  
+ if (adc_key_in < 230)  return btnUP; 
  if (adc_key_in < 310)  return btnDOWN; 
  if (adc_key_in < 450)  return btnLEFT; 
  if (adc_key_in < 670)  return btnSELECT;   
