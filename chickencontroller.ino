@@ -1,3 +1,8 @@
+/*
+ * Automated IR-based Chickencoopdoor with LCD Display to set closing and opening times
+ * -Benedict Hadi
+ */
+
 #define startIR digitalWrite(txPinIRFront, HIGH);
 #define stopIR digitalWrite(txPinIRFront, LOW);
 #define btnRIGHT  0
