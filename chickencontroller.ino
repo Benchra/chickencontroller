@@ -74,7 +74,7 @@ void loop() {
     //IF TIME IS SET CHECK IF TIME HAS REACHED TARGET TIME
   }
   /* FRONT/BACK BARRIER RX/TX START*/
-  //Creating Offset Value
+  // Creating Offset Value
   digitalWrite(txPinIRFront, LOW);
   digitalWrite(txPinIRBack, LOW);
   delay(VAL_DELAY);
