@@ -454,92 +454,92 @@ void keytrigger()
      }
    case btnUP:
      {
-     if(!timeSet)
-     {
-       clockChanged = true;
-       //Increment clock value at selected position
-       lcd.setCursor(cursorposition,1);
-       if (cursorposition >= 0 && cursorposition <= 3)
+       if(!timeSet)
        {
-        hoursClose++;
+         clockChanged = true;
+         //Increment clock value at selected position
+         lcd.setCursor(cursorposition,1);
+         if (cursorposition >= 0 && cursorposition <= 3)
+         {
+          hoursClose++;
+         }
+         else if (cursorposition > 3 && cursorposition <= 7)
+         {
+          minutesClose++;
+         }
+         else if (cursorposition > 7 && cursorposition <= 11)
+         {
+          hoursOpen++;
+         }
+         else if (cursorposition > 11 && cursorposition <= 15)
+         {
+          minutesOpen++;
+         }
+         setClockValues();
        }
-       else if (cursorposition > 3 && cursorposition <= 7)
-       {
-        minutesClose++;
-       }
-       else if (cursorposition > 7 && cursorposition <= 11)
-       {
-        hoursOpen++;
-       }
-       else if (cursorposition > 11 && cursorposition <= 15)
-       {
-        minutesOpen++;
-       }
-       setClockValues();
-     }
-     break;
+       break;
      }
    case btnDOWN:
      {
-     if(!timeSet)
-     {
-       clockChanged = true;
-       //Decrement clock value at selected position
-       lcd.setCursor(cursorposition,1);
-       if (cursorposition >= 0 && cursorposition <= 3)
+       if(!timeSet)
        {
-        hoursClose--;
+         clockChanged = true;
+         //Decrement clock value at selected position
+         lcd.setCursor(cursorposition,1);
+         if (cursorposition >= 0 && cursorposition <= 3)
+         {
+          hoursClose--;
+         }
+         else if (cursorposition > 3 && cursorposition <= 7)
+         {
+          minutesClose--;
+         }
+         else if (cursorposition > 7 && cursorposition <= 11)
+         {
+          hoursOpen--;
+         }
+         else if (cursorposition > 11 && cursorposition <= 15)
+         {
+          minutesOpen--;
+         }
+         setClockValues();
        }
-       else if (cursorposition > 3 && cursorposition <= 7)
-       {
-        minutesClose--;
-       }
-       else if (cursorposition > 7 && cursorposition <= 11)
-       {
-        hoursOpen--;
-       }
-       else if (cursorposition > 11 && cursorposition <= 15)
-       {
-        minutesOpen--;
-       }
-       setClockValues();
-     }
-     break;
+       break;
      }
    case btnSELECT:
      {
-      //TODO Set clock value for all positions
-     clockChanged = true;
-     //lcd.print("SELECT");
-     //
-     if(timeSet){
-       setHoursClose = 0;
-       setMinutesClose = 0;
-       setHoursOpen = 0;
-       setMinutesOpen = 0;
-       timeSet = false;
-       delay(1000);
-     }
-     else
-     {
-       setHoursClose = clockArray[hoursClose][0];
-       setMinutesClose = clockArray[0][minutesClose];
-       setHoursOpen = clockArray[hoursClose][1];
-       setMinutesOpen = clockArray[1][minutesClose];
-       timeSet = true;
-       delay(1000);
-     }
-     break;
+        //TODO Set clock value for all positions
+       clockChanged = true;
+       //lcd.print("SELECT");
+       //
+       if(timeSet){
+         setHoursClose = 0;
+         setMinutesClose = 0;
+         setHoursOpen = 0;
+         setMinutesOpen = 0;
+         timeSet = false;
+         delay(1000);
+       }
+       else
+       {
+         setHoursClose = clockArray[hoursClose][0];
+         setMinutesClose = clockArray[0][minutesClose];
+         setHoursOpen = clockArray[hoursClose][1];
+         setMinutesOpen = clockArray[1][minutesClose];
+         timeSet = true;
+         delay(1000);
+       }
+       break;
      }
      case btnNONE:
      {
-     //Set second row when no button is pressed
-     if(clockChanged)
-     {
-      setClockValues();
-      clockChanged = false;
-     }
-     break;
+       //Set second row when no button is pressed
+       if(clockChanged)
+       {
+        setClockValues();
+        clockChanged = false;
+       }
+       break;
      }
  }
 }
