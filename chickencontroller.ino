@@ -45,6 +45,7 @@ LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
 int lcd_key     = 0;
 int adc_key_in  = 0;
 int cursorposition = 0;
+boolean clockChanged = false;
 
 //IR Light Values
 int VAL_RECV_OFFSET_FRONT = 0;
@@ -108,8 +109,12 @@ void loop() {
   VAL_DIFF_FRONT = VAL_RECV_HIGH_FRONT - VAL_RECV_OFFSET_FRONT;
   VAL_DIFF_BACK = VAL_RECV_HIGH_BACK - VAL_RECV_OFFSET_BACK;
   if( dataOutput == 'R'){  Serial.println("Diff: "); }
+
+  /*DISPLAY SENSOR VALUES IF NEEDED */
   //Serial.println(VAL_DIFF_FRONT);
   //Serial.println(VAL_DIFF_BACK);
+
+  
   /* FRONT BARRIER RX/TX END */
 
   /* TRIGGER ACTION TREE */
@@ -217,6 +222,7 @@ void loop() {
     //UP - UP, DOWN - UP, DOWN - DOWN, UP - DOWN, UP - UP
     
     //UP - UP, UP - DOWN, DOWN - DOWN, DOWN - UP, ""
+    
     //UP - UP, UP - DOWN, DOWN - DOWN, UP - DOWN, ""
     //UP - UP, DOWN - UP, DOWN - DOWN, DOWN - UP, ""
 
@@ -240,12 +246,12 @@ void loop() {
         else if(state == 2)
         {
           frontEntry = true;
-          Serial.println("Object entered Front Barrier");
+          //Serial.println("Object entered Front Barrier");
         }
         else if(state == 3)
         {
           backEntry = true;
-          Serial.println("Object entered Back Barrier");
+          //Serial.println("Object entered Back Barrier");
         }
       }
       //front + back trig prev
@@ -258,13 +264,19 @@ void loop() {
         else if(state == 2)
         {
           if(logiccount == 1){
-            logiccount++;
+            if(backEntry)
+            {
+              logiccount++;
+            }
           }
         }
         else if(state == 3)
         {
           if(logiccount == 1){
-            logiccount++;
+            if(frontEntry)
+            {
+              logiccount++;
+            }
           }
         }
       }
@@ -285,7 +297,7 @@ void loop() {
         }
         else if(state == 3)
         {
-          Serial.println("WARNING: PROGRAM TIMING TOO SLOW OR BAD LUCK");
+          Serial.println("WARNING: (SKIPPED STATE 1) PROGRAM TIMING TOO SLOW OR BAD LUCK");
         }
       }
       //backtrig prev
@@ -293,7 +305,7 @@ void loop() {
       {
         if(state == 0)
         {          
-          if(logiccount != 0){
+          if(logiccount == 2){
             logiccount++;
           }
         }
@@ -308,6 +320,7 @@ void loop() {
           Serial.println("WARNING: PROGRAM TIMING TOO SLOW OR BAD LUCK");
         }
       }
+      Serial.println(logiccount);
     }
     /* STATEMACHINE END*/
     /* END BARRIER BREAKING LOGIC TREE */
@@ -341,14 +354,21 @@ void loop() {
   lcd.setCursor(0,0);
   //lcd.print(millis()/1000);      // display seconds elapsed since power-up
   //lcd.print(trigCountFront);
+  
   if(testrun){
+    /*
     if (frontTriggered) {lcd.print("Barrier Broken");}
     if (!frontTriggered) {lcd.print("Barrier Up      ");}
+    */
+    lcd.print(chickencounter);
+    lcd.setCursor(2,0);
+    lcd.print("Chicken inside");
   }
   else{
     lcd.print("Set Closing Time:");
   }
-  lcd.setCursor(7,1);            // move to the begining of the second line
+  
+  //lcd.setCursor(7,1);            // move to the begining of the second line
   lcd_key = read_LCD_buttons();  // read the buttons
   keytrigger();
   }
@@ -366,8 +386,8 @@ int read_LCD_buttons()
  //Manually read triggervalues for buttons, then added 50
  if (adc_key_in < 120)   return btnRIGHT;  
  if (adc_key_in < 230)  return btnUP; 
- if (adc_key_in < 310)  return btnDOWN; 
- if (adc_key_in < 450)  return btnLEFT; 
+ if (adc_key_in < 350)  return btnDOWN; 
+ if (adc_key_in < 460)  return btnLEFT; 
  if (adc_key_in < 670)  return btnSELECT;   
  
  return btnNONE;  // default value
@@ -382,7 +402,8 @@ void keytrigger()
  {
    case btnRIGHT:
      {
-     //TODO change cursor to right position unless already to the rightmost position
+      clockChanged = true;
+     //change cursor to right position unless already to the rightmost position
      lcd.print("Cursor to RIGHT");
      lcd.setCursor(cursorposition,1);
      cursorposition++; 
@@ -392,7 +413,8 @@ void keytrigger()
      }
    case btnLEFT:
      {
-      //TODO change cursor to left position unless already to the leftmost position
+      clockChanged = true;
+     //change cursor to left position unless already to the leftmost position
      lcd.print("Cursor to LEFT");
      lcd.setCursor(cursorposition,1);
      cursorposition--; 
@@ -402,7 +424,8 @@ void keytrigger()
      }
    case btnUP:
      {
-      //TODO Increment clock value at selected position
+     clockChanged = true;
+     //Increment clock value at selected position
      lcd.setCursor(cursorposition,1);
      if (cursorposition == 0 || cursorposition == 1)
      {
@@ -417,7 +440,8 @@ void keytrigger()
      }
    case btnDOWN:
      {
-      //TODO Decrement clock value at selected position
+     clockChanged = true;
+     //Decrement clock value at selected position
      lcd.setCursor(cursorposition,1);
      if (cursorposition == 0 || cursorposition == 1)
      {
@@ -433,6 +457,7 @@ void keytrigger()
    case btnSELECT:
      {
       //TODO Set clock value for all positions
+     clockChanged = true;
      lcd.print("SELECT");
      //
      if(timeSet){
@@ -451,7 +476,11 @@ void keytrigger()
      case btnNONE:
      {
      //Set second row when no button is pressed
-     setClockValues();
+     if(clockChanged)
+     {
+      setClockValues();
+      clockChanged = false;
+     }
      break;
      }
  }
