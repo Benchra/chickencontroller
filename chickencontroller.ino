@@ -1,5 +1,6 @@
 /*
  * Automated IR-based Chickencoopdoor with LCD Display to set closing and opening times
+ * 2017_12_09  : Added Statemachine
  * -Benedict Hadi
  */
 
@@ -30,6 +31,13 @@ int minutes = 30;
 boolean timeSet = false;
 int setHours = 0;
 int setMinutes = 0;
+
+int state = 0;
+int prevstate = 0;
+int logiccount = 0;
+boolean frontEntry = false;
+boolean backEntry = false;
+int chickencounter = 0;
 
 // select the pins used on the LCD panel
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
@@ -177,20 +185,158 @@ void loop() {
 
     /* START BARRIER BREAKING LOGIC TREE */
     /* BARRIER TRAVERSING (ACTION NEEDED)*/
-    //UP - UP, DOWN - UP, DOWN - DOWN, UP - DOWN
+    // UP-UP :        state = 0
+    // DOWN - DOWN :  state = 1
+    // DOWN - UP :    state = 2
+    // UP - DOWN :    state = 3
+
+    // Saving previous state
+    prevstate = state;
     
-    //UP - UP, UP - DOWN, DOWN - DOWN, DOWN - UP
+    // Determining loop State
+    if(!frontTriggered && !backTriggered)
+    {
+      state = 0;
+    }
+    else if(frontTriggered && backTriggered)
+    {
+      state = 1;
+    }
+    else if(frontTriggered && !backTriggered)
+    {
+      state = 2;
+    }
+    else if(!frontTriggered && backTriggered)
+    {
+      state = 3;
+    }
+
+    /* EXAMPLE */
+    //   x    ,     0     ,     1      ,  2     ,    3         logiccounts
+    //   0    ,     2     ,     1      ,  3     ,    0         states
+    //UP - UP, DOWN - UP, DOWN - DOWN, UP - DOWN, UP - UP
     
-    //UP - UP, UP - DOWN, DOWN - DOWN, UP - DOWN
-    
-    //UP - UP, DOWN - UP, DOWN - DOWN, DOWN - UP
+    //UP - UP, UP - DOWN, DOWN - DOWN, DOWN - UP, ""
+    //UP - UP, UP - DOWN, DOWN - DOWN, UP - DOWN, ""
+    //UP - UP, DOWN - UP, DOWN - DOWN, DOWN - UP, ""
 
     /*BARRIER TOUCHING (NO ACTION NEEDED)*/
     //UP - UP, DOWN - UP, UP - UP
-    
     //UP - UP, UP - DOWN, UP - UP
     
+    /* STATEMACHINE START*/
+    if(prevstate != state)
+    {
+      //Nothing prev
+      if(prevstate == 0)
+      {
+        logiccount = 0;  //if previous state implies barrier up, reset the logiccount (i.e. UP-UP doesnt count towards logic tree, only the following decision does.}
+        frontEntry = false;
+        backEntry = false;
+        if(state == 1)
+        {
+          Serial.println("WARNING: Object entered both Barriers too fast or simultaneously");
+        }
+        else if(state == 2)
+        {
+          frontEntry = true;
+          Serial.println("Object entered Front Barrier");
+        }
+        else if(state == 3)
+        {
+          backEntry = true;
+          Serial.println("Object entered Back Barrier");
+        }
+      }
+      //front + back trig prev
+      else if(prevstate == 1)
+      {
+        if(state == 0)
+        {
+          Serial.println("WARNING: Object left Barriers too fast or simultaneously");
+        }
+        else if(state == 2)
+        {
+          if(logiccount == 1){
+            logiccount++;
+          }
+        }
+        else if(state == 3)
+        {
+          if(logiccount == 1){
+            logiccount++;
+          }
+        }
+      }
+      //frontTrig prev
+      else if(prevstate == 2)
+      {
+        if(state == 0)
+        {
+          if(logiccount != 0){
+            logiccount++;
+          }
+        }
+        else if(state == 1)
+        {
+          if(logiccount == 0){
+            logiccount++;
+          }
+        }
+        else if(state == 3)
+        {
+          Serial.println("WARNING: PROGRAM TIMING TOO SLOW OR BAD LUCK");
+        }
+      }
+      //backtrig prev
+      else if(prevstate == 3)
+      {
+        if(state == 0)
+        {          
+          if(logiccount != 0){
+            logiccount++;
+          }
+        }
+        else if(state == 1)
+        {
+          if(logiccount == 0){
+            logiccount++;
+          }
+        }
+        else if(state == 2)
+        {
+          Serial.println("WARNING: PROGRAM TIMING TOO SLOW OR BAD LUCK");
+        }
+      }
+    }
+    /* STATEMACHINE END*/
     /* END BARRIER BREAKING LOGIC TREE */
+
+    
+    if(logiccount == 3)
+    {
+      logiccount = 0;
+      if(frontEntry)
+      {
+        //CHICKEN PASSED THROUGH THE FRONT (I.E. +1 CHICKEN IN COOP)
+        chickencounter++;
+        Serial.println("Amount of Chickens in Coop:");
+        Serial.println(chickencounter);
+      }
+      else if(backEntry)
+      {
+        //CHICKEN PASSED THROUGH THE BACK (I.E. -1 CHICKEN IN COOP)
+        chickencounter--;
+        Serial.println("Amount of Chickens in Coop:");
+        Serial.println(chickencounter);
+      }
+      else if(!backEntry || !frontEntry)
+      {
+        Serial.println("WARNING: LOGIC TREE FAULTY");
+      }
+      else
+      {Serial.println("what the fuck");}
+    }
     
   lcd.setCursor(0,0);
   //lcd.print(millis()/1000);      // display seconds elapsed since power-up
@@ -213,17 +359,10 @@ int read_LCD_buttons()
 {
  adc_key_in = analogRead(0);      // read the value from the sensor 
  // add approx 50 to those values
- Serial.println(adc_key_in);
- if (adc_key_in > 1000) return btnNONE; // We make this the 1st option for speed reasons since it will be the most likely result
- //V1.1 threshold
- /*
- if (adc_key_in < 50)   return btnRIGHT;  
- if (adc_key_in < 250)  return btnUP; 
- if (adc_key_in < 450)  return btnDOWN; 
- if (adc_key_in < 650)  return btnLEFT;  
- if (adc_key_in < 850)  return btnSELECT;  
-  */
-
+ //Serial.println("key value"); Serial.println(adc_key_in);
+ if (adc_key_in > 1000) return btnNONE; // 1st option for speed reasons since it will be the most likely result
+ 
+ /*BUTTON THRESHOLD*/
  //Manually read triggervalues for buttons, then added 50
  if (adc_key_in < 120)   return btnRIGHT;  
  if (adc_key_in < 230)  return btnUP; 
