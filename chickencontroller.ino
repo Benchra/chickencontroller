@@ -607,12 +607,12 @@ void setClockValues(){
       lcd.print("0"); 
       tempcursor++; 
       lcd.setCursor(tempcursor,1);
-      lcd.print(clockArray[hoursOpen][1]);
+      lcd.print(clockArray[hoursOpen][0]);
       tempcursor++;
      }
      else
      {
-      lcd.print(clockArray[hoursOpen][1]);
+      lcd.print(clockArray[hoursOpen][0]);
       tempcursor += 2;
      }
      lcd.setCursor(tempcursor,1);
@@ -624,12 +624,12 @@ void setClockValues(){
       lcd.print("0"); 
       tempcursor++; 
       lcd.setCursor(tempcursor,1);
-      lcd.print(clockArray[1][minutesOpen]);
+      lcd.print(clockArray[0][minutesOpen]);
       tempcursor++;
      }
      else
      {
-      lcd.print(clockArray[1][minutesOpen]); 
+      lcd.print(clockArray[0][minutesOpen]); 
       tempcursor += 2;
      }
      //tempcursor at +5 higher than starting value now
@@ -646,18 +646,10 @@ void correctingInitialClockValues(){
 }
 
 void initClockArray(){
-  //index 0 == closing time
   for(int h = 0; h < 24; h++){
       clockArray[h][0] = h;
   }
   for(int m = 0; m < 60; m++){
       clockArray[0][m] = m;
-  }
-  //index 1 == opening time
-  for(int h = 0; h < 24; h++){
-      clockArray[h][1] = h;
-  }
-  for(int m = 0; m < 60; m++){
-      clockArray[1][m] = m;
   }
 }
