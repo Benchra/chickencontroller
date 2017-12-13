@@ -32,12 +32,18 @@ int hoursClose = 23;
 int minutesClose = 30;
 int hoursOpen = 23;
 int minutesOpen = 30;
-boolean timeSet = false;
+int hoursClock = 0;
+int minutesClock = 0;
+int hoursModule = 0;
+int minutesModule = 0;
 int setHoursClose = 0;
 int setMinutesClose = 0;
 int setHoursOpen = 0;
 int setMinutesOpen = 0;
 int tempcursor = 0;
+int setChicken = 0;
+int maxChicken = 0;
+
 
 //Statemachine variables
 int state = 0;
@@ -47,6 +53,11 @@ boolean frontEntry = false;
 boolean backEntry = false;
 int chickencounter = 0;
 
+//Motor/door variables
+boolean doorLowering = false;
+boolean doorUp = false;
+boolean doorDown = false;
+
 // select the pins used on the LCD panel
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
 //LCD Variables
@@ -54,6 +65,11 @@ int lcd_key     = 0;
 int adc_key_in  = 0;
 int cursorposition = 0;
 boolean clockChanged = false;
+int lcdmenu = 0; //0: time open/close set; 1: time current set(clock module); 2: maxChicken set
+boolean changeMenu = false;    // change behaviour of right/left
+boolean chickenSet = false;   // amount of chicken
+boolean clockSet = false;    // lcd clock time
+boolean timeSet = false;    // open close times
 
 //IR Light Values
 int VAL_RECV_OFFSET_FRONT = 0;
@@ -90,9 +106,43 @@ void setup()
 }
 
 void loop() {
+  //poll clock time
 
-  if(timeSet){
-    //FILL WHEN CLOCK MODULE IS IMPLEMENTED
+  //
+
+  if(doorLowering) //if motor is lowering
+  {
+    if(state != 0)
+    {
+      // stop motor
+      moveMotor('s');
+    }
+  }
+  
+  if(timeSet && clockSet){
+    if(hoursOpen == hoursClock && chickencounter == maxChicken)
+    {
+      if(state == 0) //only lower if nothing in door
+      {
+        if(doorUp)
+        {
+          //start motor down
+          //add lowering function
+          moveMotor('d');
+          doorLowering = true;
+        }
+        else if(doorDown)
+        {
+          //start motor up
+          moveMotor('u');
+          doorLowering = false;
+        }
+      }
+      else
+      {
+        //Stop motor
+      }
+    }
     //IF TIME IS SET CHECK IF TIME HAS REACHED TARGET TIME
   }
   /* FRONT/BACK BARRIER RX/TX START*/
@@ -361,43 +411,58 @@ void loop() {
     
   lcd.setCursor(0,0);
   //lcd.print(millis()/1000);      // display seconds elapsed since power-up
-  //lcd.print(trigCountFront);
-  
-  if(testrun){
-    /*
-    if (frontTriggered) {lcd.print("Barrier Broken");}
-    if (!frontTriggered) {lcd.print("Barrier Up      ");}
-    */
-    lcd.print(chickencounter);
-    lcd.setCursor(2,0);
-    lcd.print("Chicken inside");
-  }
-  else{
-    if(!timeSet)
+  if(lcdmenu == 0)
+  {
+      if(!timeSet)
+      {
+       if (cursorposition >= 0 && cursorposition <= 3)
+       {
+        lcd.print("Set Closing H  ");
+       }
+       else if (cursorposition > 3 && cursorposition <= 7)
+       {
+        lcd.print("Set Closing Min  ");
+       }
+       else if (cursorposition > 7 && cursorposition <= 11)
+       {
+        lcd.print("Set Opening H  ");
+       }
+       else if (cursorposition > 11 && cursorposition <= 15)
+       {
+        lcd.print("Set Opening Min  ");
+       }
+      }
+      else{
+       lcd.print("Close/Open Time:  ");
+      }
+   }
+   else if(lcdmenu == 1)
+   {
+    if(!clockSet)
     {
-     if (cursorposition >= 0 && cursorposition <= 3)
+     if (cursorposition >= 0 && cursorposition <= 7)
      {
-      lcd.print("Set Closing H  ");
+        lcd.print("Set Current H  ");
      }
-     else if (cursorposition > 3 && cursorposition <= 7)
+     else if (cursorposition > 7 && cursorposition <= 15)
      {
-      lcd.print("Set Closing Min  ");
-     }
-     else if (cursorposition > 7 && cursorposition <= 11)
-     {
-      lcd.print("Set Opening H  ");
-     }
-     else if (cursorposition > 11 && cursorposition <= 15)
-     {
-      lcd.print("Set Opening Min  ");
+        lcd.print("Set Current Min:  ");
      }
     }
-    else
-    {
-      lcd.print("Close/Open Time:  ");
+    else{
+     lcd.print("CLOCK IS SET :          "); 
     }
-  }
-  
+   }
+   else if(lcdmenu == 2)
+   {
+      if(!chickenSet)
+      {
+        lcd.print("Chicken Amount?");
+      }
+      else{
+       lcd.print("Chicken Set    ");
+      }
+   }
   //lcd.setCursor(7,1);            // move to the begining of the second line
   lcd_key = read_LCD_buttons();  // read the buttons
   keytrigger();
@@ -433,101 +498,203 @@ void keytrigger()
    case btnRIGHT:
      {
       clockChanged = true;
-     //change cursor to right position unless already to the rightmost position
-     //lcd.print("Cursor to RIGHT");
-     lcd.setCursor(cursorposition,1);
-     cursorposition++; 
-     if(cursorposition >= MAX_DISPLAY_LENGTH) {cursorposition = MAX_DISPLAY_LENGTH;}
-     lcd.setCursor(cursorposition,1);
-     break;
+      if(changeMenu)
+      {
+        lcdmenu++;
+        if(lcdmenu >= 2){lcdmenu = 2;}
+        menustate();
+        delay(500);
+        break;
+      }
+      else
+      {
+        //change cursor to right position unless already to the rightmost position
+       //lcd.print("Cursor to RIGHT");
+       lcd.setCursor(cursorposition,1);
+       cursorposition++; 
+       if(cursorposition >= MAX_DISPLAY_LENGTH) {cursorposition = MAX_DISPLAY_LENGTH;}
+       lcd.setCursor(cursorposition,1);
+       break;
+      }
      }
    case btnLEFT:
      {
       clockChanged = true;
-     //change cursor to left position unless already to the leftmost position
-     //lcd.print("Cursor to LEFT");
-     lcd.setCursor(cursorposition,1);
-     cursorposition--; 
-     if(cursorposition < MIN_DISPLAY_LENGTH) {cursorposition = MIN_DISPLAY_LENGTH;}
-     lcd.setCursor(cursorposition,1);
-     break;
+      if(changeMenu)
+      {
+        lcdmenu--;
+        if(lcdmenu <= 0){lcdmenu =0;}
+        menustate();
+        delay(500);
+        break;
+      }
+      else
+      {
+       //change cursor to left position unless already to the leftmost position
+       lcd.setCursor(cursorposition,1);
+       cursorposition--; 
+       if(cursorposition < MIN_DISPLAY_LENGTH) {cursorposition = MIN_DISPLAY_LENGTH;}
+       lcd.setCursor(cursorposition,1);
+       break;
+      }
      }
    case btnUP:
      {
-       if(!timeSet)
+      clockChanged = true;
+      if(lcdmenu == 0)
+      {
+         if(!timeSet)
+         {
+           //Increment clock value at selected position
+           lcd.setCursor(cursorposition,1);
+           if (cursorposition >= 0 && cursorposition <= 3)
+           {
+            hoursClose++;
+           }
+           else if (cursorposition > 3 && cursorposition <= 7)
+           {
+            minutesClose++;
+           }
+           else if (cursorposition > 7 && cursorposition <= 11)
+           {
+            hoursOpen++;
+           }
+           else if (cursorposition > 11 && cursorposition <= 15)
+           {
+            minutesOpen++;
+           }
+         }
+      }
+      else if(lcdmenu == 1)
+      {
+       //Decrement clock value at selected position
+       lcd.setCursor(cursorposition,1);
+       if (cursorposition >= 0 && cursorposition <= 7)
        {
-         clockChanged = true;
-         //Increment clock value at selected position
-         lcd.setCursor(cursorposition,1);
-         if (cursorposition >= 0 && cursorposition <= 3)
-         {
-          hoursClose++;
-         }
-         else if (cursorposition > 3 && cursorposition <= 7)
-         {
-          minutesClose++;
-         }
-         else if (cursorposition > 7 && cursorposition <= 11)
-         {
-          hoursOpen++;
-         }
-         else if (cursorposition > 11 && cursorposition <= 15)
-         {
-          minutesOpen++;
-         }
-         setClockValues();
+        hoursClock++;
        }
-       break;
-     }
+       else if (cursorposition > 7 && cursorposition <= 15)
+       {
+        minutesClock++;
+       }
+      }
+      else if(lcdmenu == 2)
+      {
+        maxChicken++;
+        if(maxChicken >= 99){maxChicken = 99;}
+        delay(500);
+      }
+     setClockValues();
+     break;
+   }
    case btnDOWN:
      {
-       if(!timeSet)
-       {
-         clockChanged = true;
-         //Decrement clock value at selected position
-         lcd.setCursor(cursorposition,1);
-         if (cursorposition >= 0 && cursorposition <= 3)
-         {
-          hoursClose--;
-         }
-         else if (cursorposition > 3 && cursorposition <= 7)
-         {
-          minutesClose--;
-         }
-         else if (cursorposition > 7 && cursorposition <= 11)
-         {
-          hoursOpen--;
-         }
-         else if (cursorposition > 11 && cursorposition <= 15)
-         {
-          minutesOpen--;
-         }
-         setClockValues();
-       }
+       clockChanged = true;
+        if(lcdmenu == 0)
+        {
+         if(!timeSet)
+          {
+           //Decrement clock value at selected position
+           lcd.setCursor(cursorposition,1);
+           if (cursorposition >= 0 && cursorposition <= 3)
+           {
+            hoursClose--;
+           }
+           else if (cursorposition > 3 && cursorposition <= 7)
+           {
+            minutesClose--;
+           }
+           else if (cursorposition > 7 && cursorposition <= 11)
+           {
+            hoursOpen--;
+           }
+           else if (cursorposition > 11 && cursorposition <= 15)
+           {
+            minutesOpen--;
+           }
+          }
+        }
+        else if(lcdmenu == 1)
+        {
+          //Decrement clock value at selected position
+           lcd.setCursor(cursorposition,1);
+           if (cursorposition >= 0 && cursorposition <= 7)
+           {
+            hoursClock--;
+           }
+           else if (cursorposition > 7 && cursorposition <= 15)
+           {
+            minutesClock--;
+           }
+        }
+        else if(lcdmenu == 2)
+        {
+          maxChicken--;
+          if(maxChicken <= 0){maxChicken = 0;}
+          delay(500);
+        }
+       setClockValues();
        break;
      }
    case btnSELECT:
      {
         //TODO Set clock value for all positions
        clockChanged = true;
-       //lcd.print("SELECT");
-       //
-       if(timeSet){
-         setHoursClose = 0;
-         setMinutesClose = 0;
-         setHoursOpen = 0;
-         setMinutesOpen = 0;
-         timeSet = false;
-         delay(1000);
-       }
-       else
+       if(lcdmenu == 0)
        {
-         setHoursClose = clockArray[hoursClose][0];
-         setMinutesClose = clockArray[0][minutesClose];
-         setHoursOpen = clockArray[hoursClose][1];
-         setMinutesOpen = clockArray[1][minutesClose];
-         timeSet = true;
-         delay(1000);
+         if(timeSet){
+           setHoursClose = 0;
+           setMinutesClose = 0;
+           setHoursOpen = 0;
+           setMinutesOpen = 0;
+           timeSet = false;
+           changeMenu = false;
+           delay(1000);
+         }
+         else
+         {
+           setHoursClose = clockArray[hoursClose][0];
+           setMinutesClose = clockArray[0][minutesClose];
+           setHoursOpen = clockArray[hoursOpen][0];
+           setMinutesOpen = clockArray[0][minutesOpen];
+           timeSet = true;
+           changeMenu = true;
+           delay(1000);
+         }
+       }
+       else if(lcdmenu == 1)
+       {
+        if(clockSet){
+           hoursClock = 0;
+           minutesClock = 0;
+           clockSet = false;
+           changeMenu = false;
+           delay(1000);
+         }
+         else
+         {
+           hoursModule = clockArray[hoursClock][0];
+           minutesModule = clockArray[0][minutesClock];
+           clockSet = true;
+           changeMenu = true;
+           delay(1000);
+         }
+       }
+       else if(lcdmenu == 2)
+       {
+         if(chickenSet){
+           maxChicken = 0;
+           chickenSet = false;
+           changeMenu = false;
+           delay(1000);
+         }
+         else
+         {
+           setChicken = maxChicken;
+           chickenSet = true;
+           changeMenu = true;
+           delay(1000);
+         }
        }
        break;
      }
@@ -556,93 +723,176 @@ void setClockValues(){
      if(hoursOpen > 23){ hoursOpen = 0;}
      if(hoursOpen < 0) { hoursOpen = 23; }
 
+     if(minutesClock > 59){ hoursClock++; minutesClock =0;}
+     if(minutesClock < 0) { hoursClock--; minutesClock = 59; }
+     if(hoursClock > 23){ hoursClock = 0;}
+     if(hoursClock < 0) { hoursClock = 23; }
+     
      tempcursor = 0;
-     
-     /*SETTING VALUES CLOSING TIME */
-     lcd.setCursor(tempcursor,1);
-     if(hoursClose < 10 && hoursClose > -1)
+     if(lcdmenu == 0)
      {
-      lcd.print("0"); 
-      tempcursor++; 
-      lcd.setCursor(tempcursor,1);
-      lcd.print(clockArray[hoursClose][0]);
-      tempcursor++;
-     }
-     else
-     {
-      lcd.print(clockArray[hoursClose][0]);
+       /*SETTING VALUES CLOSING TIME */
+       lcd.setCursor(tempcursor,1);
+       if(hoursClose < 10 && hoursClose > -1)
+       {
+        lcd.print("0"); 
+        tempcursor++; 
+        lcd.setCursor(tempcursor,1);
+        lcd.print(clockArray[hoursClose][0]);
+        tempcursor++;
+       }
+       else
+       {
+        lcd.print(clockArray[hoursClose][0]);
+        tempcursor += 2;
+       }
+       lcd.setCursor(tempcursor,1);
+       lcd.print(":");
+       tempcursor++;
+       lcd.setCursor(tempcursor,1);
+       if(minutesClose < 10)
+       {
+        lcd.print("0"); 
+        tempcursor++; 
+        lcd.setCursor(tempcursor,1);
+        lcd.print(clockArray[0][minutesClose]);
+        tempcursor++;
+       }
+       else
+       {
+        lcd.print(clockArray[0][minutesClose]); 
+        tempcursor += 2;
+       }
+       //tempcursor at +5 higher than starting value now
+  
+      
+      lcd.print("cl"); 
       tempcursor += 2;
-     }
-     lcd.setCursor(tempcursor,1);
-     lcd.print(":");
-     tempcursor++;
-     lcd.setCursor(tempcursor,1);
-     if(minutesClose < 10)
-     {
-      lcd.print("0"); 
-      tempcursor++; 
-      lcd.setCursor(tempcursor,1);
-      lcd.print(clockArray[0][minutesClose]);
-      tempcursor++;
-     }
-     else
-     {
-      lcd.print(clockArray[0][minutesClose]); 
+  
+      
+      lcd.print("  "); 
       tempcursor += 2;
-     }
-     //tempcursor at +5 higher than starting value now
+  
+      /*SETTING VALUES OPENING TIME */
+       lcd.setCursor(tempcursor,1);
+       if(hoursOpen < 10 && hoursOpen > -1)
+       {
+        lcd.print("0"); 
+        tempcursor++; 
+        lcd.setCursor(tempcursor,1);
+        lcd.print(clockArray[hoursOpen][0]);
+        tempcursor++;
+       }
+       else
+       {
+        lcd.print(clockArray[hoursOpen][0]);
+        tempcursor += 2;
+       }
+       lcd.setCursor(tempcursor,1);
+       lcd.print(":");
+       tempcursor++;
+       lcd.setCursor(tempcursor,1);
+       if(minutesOpen < 10)
+       {
+        lcd.print("0"); 
+        tempcursor++; 
+        lcd.setCursor(tempcursor,1);
+        lcd.print(clockArray[0][minutesOpen]);
+        tempcursor++;
+       }
+       else
+       {
+        lcd.print(clockArray[0][minutesOpen]); 
+        tempcursor += 2;
+       }
+       //tempcursor at +5 higher than starting value now
+       
+       lcd.print("op"); 
+       tempcursor += 2;
+   }
+   else if(lcdmenu == 1)
+   {
+       lcd.setCursor(tempcursor,1);
+       if(hoursClock < 10 && hoursClock > -1)
+       {
+        lcd.print("0"); 
+        tempcursor++; 
+        lcd.setCursor(tempcursor,1);
+        lcd.print(clockArray[hoursClock][0]);
+        tempcursor++;
+       }
+       else
+       {
+        lcd.print(clockArray[hoursClock][0]);
+        tempcursor += 2;
+       }
+       lcd.setCursor(tempcursor,1);
+       lcd.print(":");
+       tempcursor++;
+       lcd.setCursor(tempcursor,1);
+       if(minutesClock < 10)
+       {
+        lcd.print("0"); 
+        tempcursor++; 
+        lcd.setCursor(tempcursor,1);
+        lcd.print(clockArray[0][minutesClock]);
+        tempcursor++;
+       }
+       else
+       {
+        lcd.print(clockArray[0][minutesClock]); 
+        tempcursor += 2;
+       }
+       //tempcursor at +5 higher than starting value now
+  
+      
+      lcd.print("           "); 
+      tempcursor += 2;
+   }
+   else if(lcdmenu == 2)
+   {
+      lcd.setCursor(tempcursor,1);
+      if(maxChicken < 10 && maxChicken > -1)
+       {
+        lcd.print("0"); 
+        tempcursor++; 
+        lcd.setCursor(tempcursor,1);
+        lcd.print(maxChicken);
+        tempcursor++;
+       }
+       else
+       {
+        lcd.print(maxChicken);
+        tempcursor += 2;
+       }
+      lcd.print("                   ");
+   }
+}
 
+void moveMotor(char c){
+  if(c == 'u'){
     
-    lcd.print("cl"); 
-    tempcursor += 2;
-
+  }
+  else if(c == 'd'){
     
-    lcd.print("  "); 
-    tempcursor += 2;
+  }
+  else if(c == 's'){
+    
+  }
+  
+}
 
-    /*SETTING VALUES OPENING TIME */
-     lcd.setCursor(tempcursor,1);
-     if(hoursOpen < 10 && hoursOpen > -1)
-     {
-      lcd.print("0"); 
-      tempcursor++; 
-      lcd.setCursor(tempcursor,1);
-      lcd.print(clockArray[hoursOpen][0]);
-      tempcursor++;
-     }
-     else
-     {
-      lcd.print(clockArray[hoursOpen][0]);
-      tempcursor += 2;
-     }
-     lcd.setCursor(tempcursor,1);
-     lcd.print(":");
-     tempcursor++;
-     lcd.setCursor(tempcursor,1);
-     if(minutesOpen < 10)
-     {
-      lcd.print("0"); 
-      tempcursor++; 
-      lcd.setCursor(tempcursor,1);
-      lcd.print(clockArray[0][minutesOpen]);
-      tempcursor++;
-     }
-     else
-     {
-      lcd.print(clockArray[0][minutesOpen]); 
-      tempcursor += 2;
-     }
-     //tempcursor at +5 higher than starting value now
-     
-     lcd.print("op"); 
-     tempcursor += 2;
+void limitSwitch(){
+  
 }
 
 void correctingInitialClockValues(){
    if(minutesClose == 60) { minutesClose = 0;}
-   if(hoursClose == 60) { hoursClose = 0;}
+   if(hoursClose == 24) { hoursClose = 0;}
    if(minutesOpen == 60) { minutesOpen = 0;}
-   if(hoursOpen == 60) { hoursOpen = 0;}
+   if(hoursOpen == 24) { hoursOpen = 0;}
+   if(minutesClock == 60) { minutesOpen = 0;}
+   if(hoursClock == 24) { hoursOpen = 0;}
 }
 
 void initClockArray(){
@@ -652,4 +902,10 @@ void initClockArray(){
   for(int m = 0; m < 60; m++){
       clockArray[0][m] = m;
   }
+}
+
+void menustate(){
+        if(lcdmenu == 0 && timeSet == false){changeMenu = false;}else if(lcdmenu == 0 && timeSet == true){changeMenu = true;}
+        if(lcdmenu == 1 && clockSet == false){changeMenu = false;}else if(lcdmenu == 0 && clockSet == true){changeMenu = true;}
+        if(lcdmenu == 2 && chickenSet == false){changeMenu = false;}else if(lcdmenu == 0 && chickenSet == true){changeMenu = true;}
 }
