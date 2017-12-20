@@ -4,6 +4,7 @@
  * 2017_12_11  : Added LCD Menu
  * 2017_12_14  : Added Clock Module
  * 2017_12_15  : Added Motor logic, motor activation and limit switch function
+ * 2017_12_20  : Changed Motor Controls, added interrupt for lowering door (3s) !NOT TESTED!
  * -Benedict Hadi
  */
 #include <avr/eeprom.h>
