@@ -54,7 +54,7 @@ boolean PM = false;
 
 //Chicken Variables
 int setChicken = 0;
-int maxChicken = 0;
+int maxChicken = 5;
 
 
 //Statemachine variables
@@ -77,6 +77,8 @@ const int VAL_TRIGGER_BACK = 500;
 boolean doorLowering = false;
 boolean doorUp = false;
 boolean doorDown = false;
+int interruptOverflowCounter = 0;
+int doorClosingDuration = 3;
 
 //LCD Variables
 int lcd_key     = 0;
@@ -88,7 +90,7 @@ boolean changeMenu = false;    // change behaviour of right/left
 boolean chickenSet = false;   // amount of chicken
 boolean clockSet = false;    // lcd clock time
 boolean timeSet = false;    // open close times
-int tempcursor = 0;
+int tempcursor = 0;        // navigate to valid position on the row
 
 //IR Light Values
 int VAL_RECV_OFFSET_FRONT = 0;
@@ -121,7 +123,46 @@ void setup()
   setClockModule();
   setPinModes();
 
+  cli();//stop interrupts
+
+//setzen des timer1 interrupt auf 200Hz
+  TCCR1A = 0;// Timmerregister TCCR1A auf 0 setzen
+  TCCR1B = 0;// Timmerregister TCCR1B auf 0 setzen
+  TCNT1  = 0;// Zählregister auf 0 setzen
+  // Setzen des compare match register für 200hz
+  OCR1A = 15624;// = (16*10^6) / (1024*1) - 1 (muss < 65536 sein)
+  // Timer modus: CTC mode
+  TCCR1B |= (1 << WGM12);
+  // Setzen CS12 und CS10 bits für Vorteiler 64
+  TCCR1B |= (1 << CS11) | (1 << CS10);  
+  // Aktivieren timer compare interrupt
+  TIMSK1 |= (1 << OCIE1A);
+
+//Timer 5 zum Zählen der Flanken. Externen Takt an DigitalenPort 47
+  TCCR5A = 0;// Timmerregister TCCR5A auf 0 setzen / Normaler Countermodus
+  TCCR5B = 0;// Timmerregister TCCR5B auf 0 setzen / Normaler Countermodus
+  TCNT5  = 0;//  Zählregister auf 0 setzen
+
+  // Setzen der Bits für externen Takt an DigitalenPort 47
+  TCCR5B |= (1 << CS52) | (1 << CS51) | (1 << CS50);  
+
+
+//sei();//allow interrupts
+
   Serial.println("Setup complete");
+}
+
+// Timer2 erzeugt alle 3s
+ISR(TIMER1_COMPA_vect){
+  TCNT5 = 0;        // Setzen des Zählregisters auf 0
+  interruptOverflowCounter++;
+  if(interruptOverflowCounter >= doorClosingDuration)
+  {
+    moveMotor('s');
+    interruptOverflowCounter = 0;
+    Serial.println("timer triggerd 3 times");
+    cli();
+  }
 }
 
 void setClockModule()
@@ -156,11 +197,11 @@ void loop() {
   getClockValues();
   
   //Function controlling the motor
-  motorLogic();
+  motorControl();
 
   //Getting raw IR Data
   getIRValues();
-  /*DISPLAY SENSOR VALUES IF NEEDED */
+  /*DISPLAY SENSOR VALUES FOR DEBUGGING */
   //Serial.println(VAL_DIFF_FRONT);
   //Serial.println(VAL_DIFF_BACK);
 
@@ -175,8 +216,12 @@ void loop() {
   keytrigger();
 }
 
-void motorLogic()
+void motorControl()
 {
+  doorUp = limitSwitchTriggeredTop();
+  boolean openingTime = false;
+  boolean closingTime = false;
+  
   if(doorLowering) //if motor is lowering
   {
     if(state != 0)
@@ -185,38 +230,44 @@ void motorLogic()
       moveMotor('s');
     }
   }
+  else if(limitSwitchTriggeredTop)
+  {
+    moveMotor('s');
+  }
   
   if(timeSet && clockSet){
     if(hoursOpen == hoursModule && minutesOpen == minutesModule)
     {
-      if(state == 0) //only lower if nothing in door
-      {
+      openingTime = true;
+    }
+    if(hoursClose == hoursModule && minutesClose == minutesModule)
+    {
+      closingTime = true;
+    }
+    
+    if(openingTime)
+    {
         if(doorUp)
         {
           //if up stay up
           moveMotor('s');
         }
-        else if(doorDown)
+        else if(!doorUp)
         {
           //start motor up
           moveMotor('u');
           doorLowering = false;
         }
-      }
-      else
-      {
-        moveMotor('s');
-      }
     }
-    else if(hoursClose == hoursModule && minutesClose == minutesModule && chickencounter == maxChicken)
+    else if(closingTime && chickencounter == maxChicken)
     {
       if(state == 0) //only lower if nothing in door
       {
         if(doorUp)
         {
           //start motor down
-          //add lowering function
-          moveMotor('d');
+          //start interrupt
+          sei();
           doorLowering = true;
         }
         else if(doorDown)
@@ -1045,17 +1096,6 @@ boolean limitSwitchTriggeredTop(){
   analogRead(limitSwitchTop);
 
   if(limitSwitchTop >= LIMIT_SWITCH_TRIGGER_VALUE)
-  {
-    triggered = true;
-  }
-  return triggered;
-}
-
-boolean limitSwitchTriggeredBottom(){
-  boolean triggered = false; 
-  analogRead(limitSwitchBottom);
-
-  if(limitSwitchBottom >= LIMIT_SWITCH_TRIGGER_VALUE)
   {
     triggered = true;
   }
