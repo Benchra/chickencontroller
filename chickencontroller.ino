@@ -154,7 +154,7 @@ ISR(TIMER1_COMPA_vect){
   interruptOverflowCounter++;
   if(interruptOverflowCounter >= doorClosingDuration)
   {
-    moveMotor('s');
+    moveMotor('d');
     interruptOverflowCounter = 0;
     Serial.println("timer triggerd 3 times");
     cli();
