@@ -125,11 +125,11 @@ void setup()
 
   cli();//stop interrupts
 
-//setzen des timer1 interrupt auf 200Hz
+//setzen des timer1 interrupt auf 1Hz
   TCCR1A = 0;// Timmerregister TCCR1A auf 0 setzen
   TCCR1B = 0;// Timmerregister TCCR1B auf 0 setzen
   TCNT1  = 0;// Zählregister auf 0 setzen
-  // Setzen des compare match register für 200hz
+  // Setzen des compare match register für 1Hz
   OCR1A = 15624;// = (16*10^6) / (1024*1) - 1 (muss < 65536 sein)
   // Timer modus: CTC mode
   TCCR1B |= (1 << WGM12);
@@ -137,11 +137,6 @@ void setup()
   TCCR1B |= (1 << CS11) | (1 << CS10);  
   // Aktivieren timer compare interrupt
   TIMSK1 |= (1 << OCIE1A);
-
-//Timer 5 zum Zählen der Flanken. Externen Takt an DigitalenPort 47
-  TCCR5A = 0;// Timmerregister TCCR5A auf 0 setzen / Normaler Countermodus
-  TCCR5B = 0;// Timmerregister TCCR5B auf 0 setzen / Normaler Countermodus
-  TCNT5  = 0;//  Zählregister auf 0 setzen
 
   // Setzen der Bits für externen Takt an DigitalenPort 47
   TCCR5B |= (1 << CS52) | (1 << CS51) | (1 << CS50);  
