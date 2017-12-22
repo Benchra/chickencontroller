@@ -1,12 +1,13 @@
 /*
- * Automated IR-based Chickencoopdoor with LCD Display to set closing and opening times
- * 2017_12_09  : Added Statemachine
- * 2017_12_11  : Added LCD Menu
- * 2017_12_14  : Added Clock Module
- * 2017_12_15  : Added Motor logic, motor activation and limit switch function
- * 2017_12_20  : Changed Motor Controls, added interrupt for lowering door (3s) !NOT TESTED!
- * -Benedict Hadi
- */
+   Automated IR-based Chickencoopdoor with LCD Display to set closing and opening times
+   2017_12_09  : Added Statemachine
+   2017_12_11  : Added LCD Menu
+   2017_12_14  : Added Clock Module
+   2017_12_15  : Added Motor logic, motor activation and limit switch function
+   2017_12_20  : Changed Motor Controls, added interrupt for lowering door (3s) !NOT TESTED!
+   2017_12_22  : Bugfixed Motor Controls
+   -Benedict Hadi
+*/
 #include <avr/eeprom.h>
 #include <LiquidCrystal.h>
 #include <DS3231.h>
@@ -20,6 +21,7 @@
 #define MAX_DISPLAY_LENGTH 15
 #define MIN_DISPLAY_LENGTH 0
 #define LIMIT_SWITCH_TRIGGER_VALUE 1 //need to check
+#define MAX_MENU 3
 
 boolean testrun = false;
 
@@ -28,10 +30,9 @@ const int rxPinIRFront = A6;
 const int txPinIRFront = 2;
 const int rxPinIRBack = A7;
 const int txPinIRBack = 3;
-const int relaisA = 4;
-const int relaisB = 5;
-const int limitSwitchTop = A2;
-const int limitSwitchBottom = A3;
+const int relaisA = 11; //up
+const int relaisB = 10; //down
+const int limitSwitchTop = 12;
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
 
 //Time Variables
@@ -52,11 +53,12 @@ int setMinutesOpen = 0;
 DS3231 Clock;
 boolean hourformat = false;
 boolean PM = false;
+boolean openingTimeReached = false;
+boolean closingTimeReached = false;
 
 //Chicken Variables
 int setChicken = 0;
 int maxChicken = 5;
-
 
 //Statemachine variables
 int state = 0;
@@ -71,27 +73,30 @@ boolean backTriggered = false;
 boolean frontEntry = false;
 boolean backEntry = false;
 const int VAL_DELAY = 25;
-const int VAL_TRIGGER_FRONT = -500;
-const int VAL_TRIGGER_BACK = 500;
+const int VAL_TRIGGER_FRONT = -200;
+const int VAL_TRIGGER_BACK = -100;
 
 //Motor/door variables
 boolean doorLowering = false;
+boolean doorRaising = false;
 boolean doorUp = false;
 boolean doorDown = false;
 int interruptOverflowCounter = 0;
-int doorClosingDuration = 3;
+int interruptOverflowCounterPrev = 0;
+int doorClosingDuration = 50;
+boolean firstLoweringIteration = true;
+boolean manualMovement = false;
 
 //LCD Variables
 int lcd_key     = 0;
 int adc_key_in  = 0;
 int cursorposition = 0;
-boolean clockChanged = false;
-int lcdmenu = 0; //0: time open/close set; 1: time current set(clock module); 2: maxChicken set
-boolean changeMenu = false;    // change behaviour of right/left
-boolean chickenSet = false;   // amount of chicken
-boolean clockSet = false;    // lcd clock time
-boolean timeSet = false;    // open close times
-int tempcursor = 0;        // navigate to valid position on the row
+int lcdmenu = 3;				// 0: time open/close set; 1: time current set(clock module); 2: maxChicken set; 3:Control Motor Manually
+boolean changeMenu = false;		// change behaviour of right/left
+boolean chickenSet = false;		// amount of chicken
+boolean clockSet = false;		// lcd clock time
+boolean timeSet = false;		// open close times
+int tempcursor = 0;				// used to navigate to valid position on the row
 
 //IR Light Values
 int VAL_RECV_OFFSET_FRONT = 0;
@@ -101,10 +106,10 @@ int VAL_RECV_HIGH_BACK = 0;
 int VAL_DIFF_FRONT = 0;
 int VAL_DIFF_BACK = 0;
 
-
 // Data output mode:
 // R - raw data
 // T - trigger events
+// S - Sensor Values
 char dataOutput = 'T';
 
 void setup()
@@ -114,52 +119,46 @@ void setup()
 
   //LCD setup
   lcd.begin(16, 2);              // start the library
-  lcd.setCursor(0,0);
+  lcd.setCursor(0, 0);
   initClockArray();
   correctingInitialClockValues();
   setClockValues();
-  
+
   //Clock Module and I^2C setup
   Wire.begin();
   setClockModule();
   setPinModes();
-
+  
   cli();//stop interrupts
 
-//setzen des timer1 interrupt auf 1Hz
-  TCCR1A = 0;// Timmerregister TCCR1A auf 0 setzen
-  TCCR1B = 0;// Timmerregister TCCR1B auf 0 setzen
-  TCNT1  = 0;// Zählregister auf 0 setzen
-  // Setzen des compare match register für 1Hz
+  //set timer1 interrupt to 1Hz
+  TCCR1A = 0;// Timmerregister TCCR1A set to 0
+  TCCR1B = 0;// Timmerregister TCCR1B set to 0
+  TCNT1  = 0;// set register to 0
+  // Setzen compare match register for 1Hz
   OCR1A = 15624;// = (16*10^6) / (1024*1) - 1 (muss < 65536 sein)
-  // Timer modus: CTC mode
+  // Timer mode: CTC mode
   TCCR1B |= (1 << WGM12);
-  // Setzen CS12 und CS10 bits für Vorteiler 64
-  TCCR1B |= (1 << CS11) | (1 << CS10);  
-  // Aktivieren timer compare interrupt
+  // set CS12 und CS10 bits for prescaler 64
+  TCCR1B |= (1 << CS11) | (1 << CS10);
+  // activate timer compare interrupt
   TIMSK1 |= (1 << OCIE1A);
 
-  // Setzen der Bits für externen Takt an DigitalenPort 47
-  TCCR5B |= (1 << CS52) | (1 << CS51) | (1 << CS50);  
-
-
-//sei();//allow interrupts
-
+  sei();//allow interrupts
+  
   Serial.println("Setup complete");
 }
 
-// Timer2 erzeugt alle 3s
-ISR(TIMER1_COMPA_vect){
+// Timer2 creates interrupt every 3s
+ISR(TIMER1_COMPA_vect) {
   TCNT5 = 0;        // Setzen des Zählregisters auf 0
   interruptOverflowCounter++;
-  if(interruptOverflowCounter >= doorClosingDuration)
+  if(interruptOverflowCounter >= 50000)
   {
-    moveMotor('d');
     interruptOverflowCounter = 0;
-    Serial.println("timer triggerd 3 times");
-    cli();
   }
 }
+
 
 void setClockModule()
 {
@@ -178,7 +177,6 @@ void setPinModes()
   pinMode(relaisA, OUTPUT);
   pinMode(relaisB, OUTPUT);
   pinMode(limitSwitchTop, INPUT);
-  pinMode(limitSwitchBottom, INPUT);
 }
 
 void getClockValues()
@@ -191,15 +189,22 @@ void getClockValues()
 void loop() {
   //Function polling clock Module values
   getClockValues();
-  
+
   //Function controlling the motor
   motorControl();
 
   //Getting raw IR Data
-  getIRValues();
+  if(!manualMovement)
+  {
+    updateIRValues();
+  }
   /*DISPLAY SENSOR VALUES FOR DEBUGGING */
-  //Serial.println(VAL_DIFF_FRONT);
-  //Serial.println(VAL_DIFF_BACK);
+  if (dataOutput == 'S') 
+  {
+	  Serial.print( "FRONT: ");Serial.println(VAL_DIFF_FRONT);
+	  Serial.print( "BACK: ");Serial.println(VAL_DIFF_BACK);
+  }
+
 
   //IR Logic
   createStates();
@@ -212,75 +217,134 @@ void loop() {
   keytrigger();
 }
 
+
+void updateTimeReached()
+{
+	if (timeSet && clockSet) 
+	{
+		if (hoursOpen == hoursModule && minutesOpen == minutesModule)
+		{
+			openingTimeReached = true;
+			closingTimeReached = false;
+		}
+		if (hoursClose == hoursModule && minutesClose == minutesModule)
+		{
+			openingTimeReached = false;
+			closingTimeReached = true;
+		}
+		else
+		{
+			openingTimeReached = false;
+			closingTimeReached = false;
+		}
+	}
+}
+
 void motorControl()
 {
   doorUp = limitSwitchTriggeredTop();
-  boolean openingTime = false;
-  boolean closingTime = false;
-  
-  if(doorLowering) //if motor is lowering
+
+/*
+  if (doorLowering)
   {
-    if(state != 0)
+    if (firstLoweringIteration)
     {
-      // stop motor
+      interruptOverflowCounterPrev = interruptOverflowCounter;
+      firstLoweringIteration = false;
+    }
+
+    if (interruptOverflowCounterPrev + doorClosingDuration >= interruptOverflowCounter)
+    {
       moveMotor('s');
+      interruptOverflowCounter = 0;
+      Serial.println("door stopping downwards");
+      firstLoweringIteration = true;
     }
   }
-  else if(limitSwitchTriggeredTop)
+ */
+
+  if (!manualMovement)
   {
-    moveMotor('s');
+	  if (doorLowering) //if motor is lowering
+	  {
+		  if (state != 0)
+		  {
+			  moveMotor('s');
+			  Serial.println("´MOTOR CONTROL: stopping motor");
+		  }
+	  }
+	  else if (limitSwitchTriggeredTop())
+	  {
+		  moveMotor('s');
+		  doorUp = true;
+		  Serial.println("´MOTOR CONTROL: motor triggered limitswitch");
+	  }
+
+
+	  if (timeSet && clockSet) 
+	  {
+		  updateTimeReached();
+		  if (openingTimeReached)
+		  {
+			  if (doorUp)
+			  {
+				  moveMotor('s');
+				  doorLowering = false;
+				  Serial.println("MOTOR CONTROL: stopping motor because door already at the top position");
+			  }
+			  else if (!doorUp)
+			  {
+				  moveMotor('u');
+				  doorLowering = false;
+				  Serial.println("MOTOR CONTROL: raising door");
+			  }
+		  }
+		  else if (closingTimeReached && chickencounter >= maxChicken)
+		  {
+			  if (state == 0) //only lower if nothing in door
+			  {
+				  if (doorUp)
+				  {
+					  moveMotor('d');
+					  doorLowering = true;
+					  Serial.println("MOTOR CONTROL: lowering motor because time was reached and all Chicken in coop");
+				  }
+				  else if(!doorUp)
+				  {
+					  moveMotor('s');
+					  doorLowering = false;
+					  Serial.println("MOTOR CONTROL: stopping motor because door already at the bottom position");
+				  }
+			  }
+			  else if (state != 0)
+			  {
+
+				  Serial.println("´MOTOR CONTROL: WARNING Time Reached but barrier not free");
+			  }
+		  }
+	  }
   }
-  
-  if(timeSet && clockSet){
-    if(hoursOpen == hoursModule && minutesOpen == minutesModule)
-    {
-      openingTime = true;
-    }
-    if(hoursClose == hoursModule && minutesClose == minutesModule)
-    {
-      closingTime = true;
-    }
-    
-    if(openingTime)
-    {
-        if(doorUp)
-        {
-          //if up stay up
-          moveMotor('s');
-        }
-        else if(!doorUp)
-        {
-          //start motor up
-          moveMotor('u');
-          doorLowering = false;
-        }
-    }
-    else if(closingTime && chickencounter == maxChicken)
-    {
-      if(state == 0) //only lower if nothing in door
-      {
-        if(doorUp)
-        {
-          //start motor down
-          //start interrupt
-          sei();
-          doorLowering = true;
-        }
-        else if(doorDown)
-        {
-          moveMotor('s');
-          doorLowering = false;
-        }
-      }
-      else
-      {
-        moveMotor('s');
-      }
-    }
+  else
+  {
+	  if (doorLowering)
+	  {
+		  moveMotor('d');
+		  Serial.println("´MOTOR CONTROL: lowering motor");
+	  }
+	  else if (doorRaising)
+	  {
+		  moveMotor('u');
+		  Serial.println("´MOTOR CONTROL: raising motor");
+	  }
+	  else
+	  {
+		  moveMotor('s');
+		  Serial.println("´MOTOR CONTROL: stopping motor");
+	  }
   }
 }
 
-void getIRValues()
+void updateIRValues()
 {
   /* FRONT/BACK BARRIER RX/TX START*/
   // Creating Offset Value
@@ -288,8 +352,7 @@ void getIRValues()
   digitalWrite(txPinIRBack, LOW);
   delay(VAL_DELAY);
   VAL_RECV_OFFSET_FRONT = analogRead(rxPinIRFront);
-  VAL_RECV_OFFSET_FRONT = analogRead(rxPinIRBack);
-  if( dataOutput == 'R'){  Serial.println(VAL_RECV_OFFSET_FRONT); Serial.println(VAL_RECV_OFFSET_BACK);}
+  VAL_RECV_OFFSET_BACK = analogRead(rxPinIRBack);
 
   //Reading High Value
   digitalWrite(txPinIRFront, HIGH);
@@ -297,789 +360,892 @@ void getIRValues()
   delay(VAL_DELAY);
   VAL_RECV_HIGH_FRONT = analogRead(rxPinIRFront);
   VAL_RECV_HIGH_BACK = analogRead(rxPinIRBack);
-//  if( dataOutput == 'R'){  
-//    Serial.print("HIGH Front IR Value: ");
-//    Serial.print(VAL_RECV_HIGH_FRONT); 
-//    Serial.print(" HIGH Back IR Value: ");
-//    Serial.println(VAL_RECV_HIGH_BACK);
-//    }
+
+  delay(5);
 
   //Calculate Value Difference
   VAL_DIFF_FRONT = VAL_RECV_HIGH_FRONT - VAL_RECV_OFFSET_FRONT;
   VAL_DIFF_BACK = VAL_RECV_HIGH_BACK - VAL_RECV_OFFSET_BACK;
 
-  if( dataOutput == 'R'){  
+  if ( dataOutput == 'S') {
     Serial.print("Front IR Value: ");
-    Serial.print(VAL_RECV_HIGH_FRONT); 
+    Serial.print(VAL_RECV_HIGH_FRONT);
     Serial.print(" Back IR Value: ");
     Serial.println(VAL_RECV_HIGH_BACK);
-    }
-  
+  }
   /* FRONT/BACK BARRIER RX/TX END */
-}  
+}
 
 void createStates()
 {
   /* FRONT BARRIER START*/
-    //Front Barrier broken
-    if( VAL_DIFF_FRONT >= VAL_TRIGGER_FRONT)
-    { 
-      //Increment amount of loops Barrier is broken
-      trigCountFront++;
-      //Stop trigCountFront from overflowing max int val
-      if(trigCountFront > 50000){
-        trigCountFront = permittedFault + 1;
-      }
-      //Set frontTriggered if Barrier broken too long
-      if(trigCountFront > permittedFault)
-      {
-        if(frontTriggered == false)
-        {
-          Serial.println("Object in Front Barrier");
-        }
-        //Serial.println(trigCountFront);
-        frontTriggered = true;
-      }
+  //Front Barrier broken
+  if ( VAL_DIFF_FRONT >= VAL_TRIGGER_FRONT)
+  {
+    //Increment amount of loops Barrier is broken
+    trigCountFront++;
+    //Stop trigCountFront from overflowing max int val
+    if (trigCountFront > 50000) {
+      trigCountFront = permittedFault + 1;
     }
-    //Front Barrier not broken
-    else if( VAL_DIFF_FRONT < VAL_TRIGGER_FRONT)
+    //Set frontTriggered if Barrier broken too long
+    if (trigCountFront > permittedFault)
     {
-      //Reset all triggerrelated Variables if needed
-      trigCountFront = 0;
-      if( frontTriggered == true)
+      if (frontTriggered == false)
       {
-        Serial.println("Object left Front Barrier");
-        frontTriggered = false;
+        Serial.println("Object in Front Barrier");
       }
+      //Serial.println(trigCountFront);
+      frontTriggered = true;
     }
-    /* FRONT BARRIER END*/
+  }
+  //Front Barrier not broken
+  else if ( VAL_DIFF_FRONT < VAL_TRIGGER_FRONT)
+  {
+    //Reset all triggerrelated Variables if needed
+    trigCountFront = 0;
+    if ( frontTriggered == true)
+    {
+      Serial.println("Object left Front Barrier");
+      frontTriggered = false;
+    }
+  }
+  /* FRONT BARRIER END*/
 
-    /* BACK BARRIER START*/
-    //Back Barrier broken
-    if( VAL_DIFF_BACK >= VAL_TRIGGER_BACK)
-    { 
-      //Increment amount of loops Barrier is broken
-      trigCountBack++;
-      //Stop trigCountBack from overflowing max int val
-      if(trigCountBack > 50000){
-        trigCountBack = permittedFault + 1;
-      }
-      //Set backTriggered if Barrier broken too long
-      if(trigCountBack > permittedFault)
-      {
-        if(backTriggered == false)
-        {
-          Serial.println("Object in Back Barrier");
-        }
-        //Serial.println(trigCountBack);
-        backTriggered = true;
-      }
+  /* BACK BARRIER START*/
+  //Back Barrier broken
+  if ( VAL_DIFF_BACK >= VAL_TRIGGER_BACK)
+  {
+    //Increment amount of loops Barrier is broken
+    trigCountBack++;
+    //Stop trigCountBack from overflowing max int val
+    if (trigCountBack > 50000) {
+      trigCountBack = permittedFault + 1;
     }
-    //Back Barrier not broken
-    else if( VAL_DIFF_BACK < VAL_TRIGGER_BACK)
+    //Set backTriggered if Barrier broken too long
+    if (trigCountBack > permittedFault)
     {
-      //Reset all triggerrelated Variables if needed
-      trigCountBack = 0;
-      if( backTriggered == true)
+      if (backTriggered == false)
       {
-        Serial.println("Object left Back Barrier");
-        backTriggered = false;
+        Serial.println("Object in Back Barrier");
       }
+      //Serial.println(trigCountBack);
+      backTriggered = true;
     }
-    /* BACK BARRIER END*/
+  }
+  //Back Barrier not broken
+  else if ( VAL_DIFF_BACK < VAL_TRIGGER_BACK)
+  {
+    //Reset all triggerrelated Variables if needed
+    trigCountBack = 0;
+    if ( backTriggered == true)
+    {
+      Serial.println("Object left Back Barrier");
+      backTriggered = false;
+    }
+  }
+  /* BACK BARRIER END*/
   /* START BARRIER BREAKING LOGIC TREE */
-    // UP-UP :        state = 0
-    // DOWN - DOWN :  state = 1
-    // DOWN - UP :    state = 2
-    // UP - DOWN :    state = 3
+  // UP-UP :        state = 0
+  // DOWN - DOWN :  state = 1
+  // DOWN - UP :    state = 2
+  // UP - DOWN :    state = 3
 
-    // Saving previous state
-    prevstate = state;
-    
-    // Determining loop State
-    if(!frontTriggered && !backTriggered)
-    {
-      state = 0;
-    }
-    else if(frontTriggered && backTriggered)
-    {
-      state = 1;
-    }
-    else if(frontTriggered && !backTriggered)
-    {
-      state = 2;
-    }
-    else if(!frontTriggered && backTriggered)
-    {
-      state = 3;
-    }
+  // Saving previous state
+  prevstate = state;
 
-    /* EXAMPLE */
-    /* BARRIER TRAVERSING (ACTION NEEDED)*/
-    //   x    ,     0     ,     1      ,  2     ,    3         logiccounts
-    //   0    ,     2     ,     1      ,  3     ,    0         states
-    //UP - UP, DOWN - UP, DOWN - DOWN, UP - DOWN, UP - UP
-    //UP - UP, UP - DOWN, DOWN - DOWN, DOWN - UP, ""
-    //UP - UP, UP - DOWN, DOWN - DOWN, UP - DOWN, ""
-    //UP - UP, DOWN - UP, DOWN - DOWN, DOWN - UP, ""
+  // Determining loop State
+  if (!frontTriggered && !backTriggered)
+  {
+    state = 0;
+  }
+  else if (frontTriggered && backTriggered)
+  {
+    state = 1;
+  }
+  else if (frontTriggered && !backTriggered)
+  {
+    state = 2;
+  }
+  else if (!frontTriggered && backTriggered)
+  {
+    state = 3;
+  }
 
-    /*BARRIER TOUCHING (NO ACTION NEEDED)*/
-    //UP - UP, DOWN - UP, UP - UP
-    //UP - UP, UP - DOWN, UP - UP
-   /* END BARRIER BREAKING LOGIC TREE */
+  /* EXAMPLE */
+  /* BARRIER TRAVERSING (ACTION NEEDED)*/
+  //   x    ,     0     ,     1      ,  2     ,    3         logiccounts
+  //   0    ,     2     ,     1      ,  3     ,    0         states
+  //UP - UP, DOWN - UP, DOWN - DOWN, UP - DOWN, UP - UP
+  //UP - UP, UP - DOWN, DOWN - DOWN, DOWN - UP, ""
+  //UP - UP, UP - DOWN, DOWN - DOWN, UP - DOWN, ""
+  //UP - UP, DOWN - UP, DOWN - DOWN, DOWN - UP, ""
+
+  /*BARRIER TOUCHING (NO ACTION NEEDED)*/
+  //UP - UP, DOWN - UP, UP - UP
+  //UP - UP, UP - DOWN, UP - UP
+  /* END BARRIER BREAKING LOGIC TREE */
 }
 
 void statemachine()
 {
-    if(prevstate != state)
+  if (prevstate != state)
+  {
+    //Nothing prev
+    if (prevstate == 0)
     {
-      //Nothing prev
-      if(prevstate == 0)
+      logiccount = 0;  //if previous state implies barrier up, reset the logiccount (i.e. UP-UP doesnt count towards logic tree, only the following decision does.}
+      frontEntry = false;
+      backEntry = false;
+      if (state == 1)
       {
-        logiccount = 0;  //if previous state implies barrier up, reset the logiccount (i.e. UP-UP doesnt count towards logic tree, only the following decision does.}
-        frontEntry = false;
-        backEntry = false;
-        if(state == 1)
-        {
-          Serial.println("WARNING: Object entered both Barriers too fast or simultaneously");
-        }
-        else if(state == 2)
-        {
-          frontEntry = true;
-          //Serial.println("Object entered Front Barrier");
-        }
-        else if(state == 3)
-        {
-          backEntry = true;
-          //Serial.println("Object entered Back Barrier");
-        }
+        Serial.println("WARNING: Object entered both Barriers too fast or simultaneously");
       }
-      //front + back trig prev
-      else if(prevstate == 1)
+      else if (state == 2)
       {
-        if(state == 0)
-        {
-          Serial.println("WARNING: Object left Barriers too fast or simultaneously");
-        }
-        else if(state == 2)
-        {
-          if(logiccount == 1){
-            if(backEntry)
-            {
-              logiccount++;
-            }
-          }
-        }
-        else if(state == 3)
-        {
-          if(logiccount == 1){
-            if(frontEntry)
-            {
-              logiccount++;
-            }
-          }
-        }
+        frontEntry = true;
+        //Serial.println("Object entered Front Barrier");
       }
-      //frontTrig prev
-      else if(prevstate == 2)
+      else if (state == 3)
       {
-        if(state == 0)
-        {
-          if(logiccount != 0){
-            logiccount++;
-          }
-        }
-        else if(state == 1)
-        {
-          if(logiccount == 0){
-            logiccount++;
-          }
-        }
-        else if(state == 3)
-        {
-          Serial.println("WARNING: (SKIPPED STATE 1) PROGRAM TIMING TOO SLOW OR BAD LUCK");
-        }
+        backEntry = true;
+        //Serial.println("Object entered Back Barrier");
       }
-      //backtrig prev
-      else if(prevstate == 3)
-      {
-        if(state == 0)
-        {          
-          if(logiccount == 2){
-            logiccount++;
-          }
-        }
-        else if(state == 1)
-        {
-          if(logiccount == 0){
-            logiccount++;
-          }
-        }
-        else if(state == 2)
-        {
-          Serial.println("WARNING: PROGRAM TIMING TOO SLOW OR BAD LUCK");
-        }
-      }
-      Serial.println(logiccount);
     }
+    //front + back trig prev
+    else if (prevstate == 1)
+    {
+      if (state == 0)
+      {
+        Serial.println("WARNING: Object left Barriers too fast or didn't leave through the barriers");
+      }
+      else if (state == 2)
+      {
+        if (logiccount == 1) {
+          if (backEntry)
+          {
+            logiccount++;
+          }
+        }
+      }
+      else if (state == 3)
+      {
+        if (logiccount == 1) {
+          if (frontEntry)
+          {
+            logiccount++;
+          }
+        }
+      }
+    }
+    //frontTrig prev
+    else if (prevstate == 2)
+    {
+      if (state == 0)
+      {
+        if (logiccount != 0) {
+          logiccount++;
+        }
+      }
+      else if (state == 1)
+      {
+        if (logiccount == 0) {
+          logiccount++;
+        }
+      }
+      else if (state == 3)
+      {
+        Serial.println("WARNING: (SKIPPED STATE 1) OBJECT TOO FAST OR 2 OBJECTS");
+      }
+    }
+    //backtrig prev
+    else if (prevstate == 3)
+    {
+      if (state == 0)
+      {
+        if (logiccount == 2) {
+          logiccount++;
+        }
+      }
+      else if (state == 1)
+      {
+        if (logiccount == 0) {
+          logiccount++;
+        }
+      }
+      else if (state == 2)
+      {
+        Serial.println("WARNING: (SKIPPED STATE 1) Object TOO FAST OR 2 OBJECTS");
+      }
+    }
+    Serial.println(logiccount);
+  }
 }
 
 void logicTrigger()
 {
-    if(logiccount == 3)
+  if (logiccount == 3)
+  {
+    logiccount = 0;
+    if (frontEntry)
     {
-      logiccount = 0;
-      if(frontEntry)
-      {
-        //CHICKEN PASSED THROUGH THE FRONT (I.E. +1 CHICKEN IN COOP)
-        chickencounter++;
-        Serial.println("Amount of Chickens in Coop:");
-        Serial.println(chickencounter);
-      }
-      else if(backEntry)
-      {
-        //CHICKEN PASSED THROUGH THE BACK (I.E. -1 CHICKEN IN COOP)
-        chickencounter--;
-        Serial.println("Amount of Chickens in Coop:");
-        Serial.println(chickencounter);
-      }
-      else if(!backEntry || !frontEntry)
-      {
-        Serial.println("WARNING: LOGIC TREE FAULTY");
-      }
-      else
-      {Serial.println("what the fuck");}
+      //CHICKEN PASSED THROUGH THE FRONT (I.E. +1 CHICKEN IN COOP)
+      chickencounter++;
+      Serial.println("Amount of Chickens in Coop:");
+      Serial.println(chickencounter);
     }
+    else if (backEntry)
+    {
+      //CHICKEN PASSED THROUGH THE BACK (I.E. -1 CHICKEN IN COOP)
+      chickencounter--;
+      Serial.println("Amount of Chickens in Coop:");
+      Serial.println(chickencounter);
+    }
+    else if (!backEntry || !frontEntry)
+    {
+      Serial.println("WARNING: LOGIC TREE FAULTY");
+    }
+  }
 }
 
 void setInfoRow()
 {
-  lcd.setCursor(0,0);
+  lcd.setCursor(0, 0);
 
-  if(lcdmenu == 0)
+  if (lcdmenu == 0)
   {
-      if(!timeSet)
-      {
-       if (cursorposition >= 0 && cursorposition <= 3)
-       {
-        lcd.print("Set Closing H  ");
-       }
-       else if (cursorposition > 3 && cursorposition <= 7)
-       {
-        lcd.print("Set Closing Min  ");
-       }
-       else if (cursorposition > 7 && cursorposition <= 11)
-       {
-        lcd.print("Set Opening H  ");
-       }
-       else if (cursorposition > 11 && cursorposition <= 15)
-       {
-        lcd.print("Set Opening Min  ");
-       }
-      }
-      else{
-       lcd.print("Close/Open Time:  ");
-      }
-   }
-   else if(lcdmenu == 1)
-   {
-    if(!clockSet)
+    if (!timeSet)
     {
-     if (cursorposition >= 0 && cursorposition <= 7)
-     {
-        lcd.print("Set Current H  ");
-     }
-     else if (cursorposition > 7 && cursorposition <= 15)
-     {
-        lcd.print("Set Current Min:  ");
-     }
-    }
-    else{
-     lcd.print("CLOCK IS SET :          "); 
-    }
-   }
-   else if(lcdmenu == 2)
-   {
-      if(!chickenSet)
+      if (cursorposition >= 0 && cursorposition <= 3)
       {
-        lcd.print("Chicken Amount?");
+        lcd.print("Set Closing H  ");
       }
-      else{
-       lcd.print("Chicken Set    ");
+      else if (cursorposition > 3 && cursorposition <= 7)
+      {
+        lcd.print("Set Closing Min  ");
       }
-   }
+      else if (cursorposition > 7 && cursorposition <= 11)
+      {
+        lcd.print("Set Opening H  ");
+      }
+      else if (cursorposition > 11 && cursorposition <= 15)
+      {
+        lcd.print("Set Opening Min  ");
+      }
+    }
+    else {
+      lcd.print("Close/Open Time:  ");
+    }
+  }
+  else if (lcdmenu == 1)
+  {
+    if (!clockSet)
+    {
+      if (cursorposition >= 0 && cursorposition <= 7)
+      {
+        lcd.print("Set Current H  ");
+      }
+      else if (cursorposition > 7 && cursorposition <= 15)
+      {
+        lcd.print("Set Current Min:  ");
+      }
+    }
+    else {
+      lcd.print("CLOCK IS SET :          ");
+    }
+  }
+  else if (lcdmenu == 2)
+  {
+    if (!chickenSet)
+    {
+      lcd.print("Chicken Amount?");
+    }
+    else {
+      lcd.print("Chicken Set    ");
+    }
+  }
+  if (lcdmenu == 3)
+  {
+    lcd.print("Manual Motor       ");
+  }
 }
 
 // read the buttons
 int read_LCD_buttons()
 {
- adc_key_in = analogRead(0);      // read the value from the sensor 
- // add approx 50 to those values
- //Serial.println("key value"); Serial.println(adc_key_in);
- if (adc_key_in > 1000) return btnNONE; // 1st option for speed reasons since it will be the most likely result
- 
- /*BUTTON THRESHOLD*/
- //Manually read triggervalues for buttons, then added 50
- if (adc_key_in < 120)   return btnRIGHT;  
- if (adc_key_in < 230)  return btnUP; 
- if (adc_key_in < 350)  return btnDOWN; 
- if (adc_key_in < 500)  return btnLEFT; 
- if (adc_key_in < 700)  return btnSELECT;   
- 
- return btnNONE;  // default value
+  adc_key_in = analogRead(0);      // read the value from the sensor
+  // add approx 50 to those values
+  //Serial.println("key value"); Serial.println(adc_key_in);
+  if (adc_key_in > 1000) return btnNONE; // 1st option for speed reasons since it will be the most likely result
+
+  /*BUTTON THRESHOLD*/
+  //Manually read triggervalues for buttons, then added 50
+  if (adc_key_in < 90)   return btnRIGHT;
+  if (adc_key_in < 180)  return btnUP;
+  if (adc_key_in < 350)  return btnDOWN;
+  if (adc_key_in < 500)  return btnLEFT;
+  if (adc_key_in < 700)  return btnSELECT;
+
+  return btnNONE;  // default value
 }
 
 void keytrigger()
 {
- lcd.setCursor(0,1);
- if(cursorposition < MIN_DISPLAY_LENGTH) {cursorposition = MIN_DISPLAY_LENGTH;}
- if(cursorposition >= MAX_DISPLAY_LENGTH) {cursorposition = MAX_DISPLAY_LENGTH;}
- switch (lcd_key)               // depending on which button was pushed, perform an action
- {
-   case btnRIGHT:
-     {
-      clockChanged = true;
-      if(changeMenu)
+  lcd.setCursor(0, 1);
+  if (cursorposition < MIN_DISPLAY_LENGTH) {
+    cursorposition = MIN_DISPLAY_LENGTH;
+  }
+  if (cursorposition >= MAX_DISPLAY_LENGTH) {
+    cursorposition = MAX_DISPLAY_LENGTH;
+  }
+  switch (lcd_key)               // depending on which button was pushed, perform an action
+  {
+    case btnRIGHT:
       {
-        lcdmenu++;
-        if(lcdmenu >= 2){lcdmenu = 2;}
-        menustate();
-        delay(500);
-        break;
-      }
-      else
-      {
-        //change cursor to right position unless already to the rightmost position
-       //lcd.print("Cursor to RIGHT");
-       lcd.setCursor(cursorposition,1);
-       cursorposition++; 
-       if(cursorposition >= MAX_DISPLAY_LENGTH) {cursorposition = MAX_DISPLAY_LENGTH;}
-       lcd.setCursor(cursorposition,1);
-       break;
-      }
-     }
-   case btnLEFT:
-     {
-      clockChanged = true;
-      if(changeMenu)
-      {
-        lcdmenu--;
-        if(lcdmenu <= 0){lcdmenu =0;}
-        menustate();
-        delay(500);
-        break;
-      }
-      else
-      {
-       //change cursor to left position unless already to the leftmost position
-       lcd.setCursor(cursorposition,1);
-       cursorposition--; 
-       if(cursorposition < MIN_DISPLAY_LENGTH) {cursorposition = MIN_DISPLAY_LENGTH;}
-       lcd.setCursor(cursorposition,1);
-       break;
-      }
-     }
-   case btnUP:
-     {
-      clockChanged = true;
-      if(lcdmenu == 0)
-      {
-         if(!timeSet)
-         {
-           //Increment clock value at selected position
-           lcd.setCursor(cursorposition,1);
-           if (cursorposition >= 0 && cursorposition <= 3)
-           {
-            hoursClose++;
-           }
-           else if (cursorposition > 3 && cursorposition <= 7)
-           {
-            minutesClose++;
-           }
-           else if (cursorposition > 7 && cursorposition <= 11)
-           {
-            hoursOpen++;
-           }
-           else if (cursorposition > 11 && cursorposition <= 15)
-           {
-            minutesOpen++;
-           }
-         }
-      }
-      else if(lcdmenu == 1)
-      {
-       //Decrement clock value at selected position
-       lcd.setCursor(cursorposition,1);
-       if (cursorposition >= 0 && cursorposition <= 7)
-       {
-        hoursClock++;
-       }
-       else if (cursorposition > 7 && cursorposition <= 15)
-       {
-        minutesClock++;
-       }
-      }
-      else if(lcdmenu == 2)
-      {
-        maxChicken++;
-        if(maxChicken >= 99){maxChicken = 99;}
-        delay(500);
-      }
-     setClockValues();
-     break;
-   }
-   case btnDOWN:
-     {
-       clockChanged = true;
-        if(lcdmenu == 0)
+        if (changeMenu)
         {
-         if(!timeSet)
-          {
-           //Decrement clock value at selected position
-           lcd.setCursor(cursorposition,1);
-           if (cursorposition >= 0 && cursorposition <= 3)
-           {
-            hoursClose--;
-           }
-           else if (cursorposition > 3 && cursorposition <= 7)
-           {
-            minutesClose--;
-           }
-           else if (cursorposition > 7 && cursorposition <= 11)
-           {
-            hoursOpen--;
-           }
-           else if (cursorposition > 11 && cursorposition <= 15)
-           {
-            minutesOpen--;
-           }
+          lcdmenu++;
+          if (lcdmenu >= MAX_MENU) {
+            lcdmenu = MAX_MENU;
           }
-        }
-        else if(lcdmenu == 1)
-        {
-          //Decrement clock value at selected position
-           lcd.setCursor(cursorposition,1);
-           if (cursorposition >= 0 && cursorposition <= 7)
-           {
-            hoursClock--;
-           }
-           else if (cursorposition > 7 && cursorposition <= 15)
-           {
-            minutesClock--;
-           }
-        }
-        else if(lcdmenu == 2)
-        {
-          maxChicken--;
-          if(maxChicken <= 0){maxChicken = 0;}
+          menustate();
           delay(500);
         }
-       setClockValues();
-       break;
-     }
-   case btnSELECT:
-     {
-        //TODO Set clock value for all positions
-       clockChanged = true;
-       if(lcdmenu == 0)
-       {
-         if(timeSet){
-           setHoursClose = 0;
-           setMinutesClose = 0;
-           setHoursOpen = 0;
-           setMinutesOpen = 0;
-           timeSet = false;
-           changeMenu = false;
-           delay(1000);
-         }
-         else
-         {
-           setHoursClose = clockArray[hoursClose][0];
-           setMinutesClose = clockArray[0][minutesClose];
-           setHoursOpen = clockArray[hoursOpen][0];
-           setMinutesOpen = clockArray[0][minutesOpen];
-           timeSet = true;
-           changeMenu = true;
-           delay(1000);
-         }
-       }
-       else if(lcdmenu == 1)
-       {
-        if(clockSet){
-           hoursClock = hoursModule;
-           minutesClock = minutesModule;
-           clockSet = false;
-           changeMenu = false;
-           delay(1000);
-         }
-         else
-         {
-           Clock.setHour(hoursClock);
-           Clock.setMinute(minutesClock);
-           clockSet = true;
-           changeMenu = true;
-           delay(1000);
-         }
-       }
-       else if(lcdmenu == 2)
-       {
-         if(chickenSet){
-           maxChicken = 0;
-           chickenSet = false;
-           changeMenu = false;
-           delay(1000);
-         }
-         else
-         {
-           setChicken = maxChicken;
-           chickenSet = true;
-           changeMenu = true;
-           delay(1000);
-         }
-       }
-       break;
-     }
-     case btnNONE:
-     {
-       //Set second row when no button is pressed
-       if(clockChanged)
-       {
+        else
+        {
+          //change cursor to right position unless already to the rightmost position
+          //lcd.print("Cursor to RIGHT");
+          lcd.setCursor(cursorposition, 1);
+          cursorposition++;
+          if (cursorposition >= MAX_DISPLAY_LENGTH) {
+            cursorposition = MAX_DISPLAY_LENGTH;
+          }
+          lcd.setCursor(cursorposition, 1);
+        }
+        break;
+      }
+    case btnLEFT:
+      {
+        if (changeMenu)
+        {
+          lcdmenu--;
+          if (lcdmenu <= 0) {
+            lcdmenu = 0;
+          }
+          menustate();
+          delay(500);
+          break;
+        }
+        else
+        {
+          //change cursor to left position unless already to the leftmost position
+          lcd.setCursor(cursorposition, 1);
+          cursorposition--;
+          if (cursorposition < MIN_DISPLAY_LENGTH) {
+            cursorposition = MIN_DISPLAY_LENGTH;
+          }
+          lcd.setCursor(cursorposition, 1);
+          break;
+        }
+      }
+    case btnUP:
+      {
+        switch(lcdmenu)
+        {
+          case 0:
+          {
+            if (!timeSet)
+            {
+              //Increment clock value at selected position
+              lcd.setCursor(cursorposition, 1);
+              if (cursorposition >= 0 && cursorposition <= 3)
+              {
+                hoursClose++;
+              }
+              else if (cursorposition > 3 && cursorposition <= 7)
+              {
+                minutesClose++;
+              }
+              else if (cursorposition > 7 && cursorposition <= 11)
+              {
+                hoursOpen++;
+              }
+              else if (cursorposition > 11 && cursorposition <= 15)
+              {
+                minutesOpen++;
+              }
+            }
+            break;
+          }
+          case 1:
+          {
+            //Decrement clock value at selected position
+            lcd.setCursor(cursorposition, 1);
+            if (cursorposition >= 0 && cursorposition <= 7)
+            {
+              hoursClock++;
+            }
+            else if (cursorposition > 7 && cursorposition <= 15)
+            {
+              minutesClock++;
+            }
+            break;
+          }
+          case 2:
+          {
+            maxChicken++;
+            if (maxChicken >= 99) {
+              maxChicken = 99;
+            }
+            delay(500);
+            break;
+          }
+          case 3:
+          {
+            if(doorRaising)
+            {
+              doorRaising = false;
+              doorLowering = false;
+            }
+            else if(!doorRaising)
+            {
+              doorRaising = true;
+              doorLowering = false;
+              Serial.println("SET doorRaising true");
+            }
+            break;
+          }
+        }
         setClockValues();
-        clockChanged = false;
-       }
-       if(lcdmenu == 1)
-       {
-        setClockValues(); 
-       }
-       break;
-     }
- }
-}
-
-void setClockValues(){
-     //Correcting faulty values
-     if(minutesClose > 59){ hoursClose++; minutesClose = 0;}
-     if(minutesClose < 0) { hoursClose--; minutesClose = 59; }
-     if(hoursClose > 23){ hoursClose = 0;}
-     if(hoursClose < 0) { hoursClose = 23; }
-     
-     if(minutesOpen > 59){ hoursOpen++; minutesOpen = 0;}
-     if(minutesOpen < 0) { hoursOpen--; minutesOpen = 59; }
-     if(hoursOpen > 23){ hoursOpen = 0;}
-     if(hoursOpen < 0) { hoursOpen = 23; }
-
-     if(minutesClock > 59){ hoursClock++; minutesClock =0;}
-     if(minutesClock < 0) { hoursClock--; minutesClock = 59; }
-     if(hoursClock > 23){ hoursClock = 0;}
-     if(hoursClock < 0) { hoursClock = 23; }
-     
-     tempcursor = 0;
-     if(lcdmenu == 0)
-     {
-       /*SETTING VALUES CLOSING TIME */
-       lcd.setCursor(tempcursor,1);
-       if(hoursClose < 10 && hoursClose > -1)
-       {
-        lcd.print("0"); 
-        tempcursor++; 
-        lcd.setCursor(tempcursor,1);
-        lcd.print(clockArray[hoursClose][0]);
-        tempcursor++;
-       }
-       else
-       {
-        lcd.print(clockArray[hoursClose][0]);
-        tempcursor += 2;
-       }
-       lcd.setCursor(tempcursor,1);
-       lcd.print(":");
-       tempcursor++;
-       lcd.setCursor(tempcursor,1);
-       if(minutesClose < 10)
-       {
-        lcd.print("0"); 
-        tempcursor++; 
-        lcd.setCursor(tempcursor,1);
-        lcd.print(clockArray[0][minutesClose]);
-        tempcursor++;
-       }
-       else
-       {
-        lcd.print(clockArray[0][minutesClose]); 
-        tempcursor += 2;
-       }
-       //tempcursor at +5 higher than starting value now
-  
-      
-      lcd.print("cl"); 
-      tempcursor += 2;
-  
-      
-      lcd.print("  "); 
-      tempcursor += 2;
-  
-      /*SETTING VALUES OPENING TIME */
-       lcd.setCursor(tempcursor,1);
-       if(hoursOpen < 10 && hoursOpen > -1)
-       {
-        lcd.print("0"); 
-        tempcursor++; 
-        lcd.setCursor(tempcursor,1);
-        lcd.print(clockArray[hoursOpen][0]);
-        tempcursor++;
-       }
-       else
-       {
-        lcd.print(clockArray[hoursOpen][0]);
-        tempcursor += 2;
-       }
-       lcd.setCursor(tempcursor,1);
-       lcd.print(":");
-       tempcursor++;
-       lcd.setCursor(tempcursor,1);
-       if(minutesOpen < 10)
-       {
-        lcd.print("0"); 
-        tempcursor++; 
-        lcd.setCursor(tempcursor,1);
-        lcd.print(clockArray[0][minutesOpen]);
-        tempcursor++;
-       }
-       else
-       {
-        lcd.print(clockArray[0][minutesOpen]); 
-        tempcursor += 2;
-       }
-       //tempcursor at +5 higher than starting value now
-       
-       lcd.print("op"); 
-       tempcursor += 2;
-   }
-   else if(lcdmenu == 1)
-   {
-       lcd.setCursor(tempcursor,1);
-       if(hoursClock < 10 && hoursClock > -1)
-       {
-        lcd.print("0"); 
-        tempcursor++; 
-        lcd.setCursor(tempcursor,1);
-        lcd.print(clockArray[hoursClock][0]);
-        tempcursor++;
-       }
-       else
-       {
-        lcd.print(clockArray[hoursClock][0]);
-        tempcursor += 2;
-       }
-       lcd.setCursor(tempcursor,1);
-       lcd.print(":");
-       tempcursor++;
-       lcd.setCursor(tempcursor,1);
-       if(minutesClock < 10)
-       {
-        lcd.print("0"); 
-        tempcursor++; 
-        lcd.setCursor(tempcursor,1);
-        lcd.print(clockArray[0][minutesClock]);
-        tempcursor++;
-       }
-       else
-       {
-        lcd.print(clockArray[0][minutesClock]); 
-        tempcursor += 2;
-       }
-       //tempcursor at +5 higher than starting value now
-
-      lcd.print("   "); 
-      tempcursor += 3;
-
-     if(hoursModule < 10 && hoursModule > -1)
-     {
-        lcd.print("0"); 
-        tempcursor++; 
-        lcd.setCursor(tempcursor,1);
-        lcd.print(hoursModule);
-        tempcursor++;
-     }
-     else
-     {
-      lcd.print(clockArray[hoursModule][0]);
-      tempcursor += 2;
-     }
-     lcd.setCursor(tempcursor,1);
-     lcd.print(":");
-     tempcursor++;
-     lcd.setCursor(tempcursor,1);
-     
-     if(minutesModule < 10)
-     {
-      lcd.print("0"); 
-      tempcursor++; 
-      lcd.setCursor(tempcursor,1);
-      lcd.print(clockArray[0][minutesModule]);
-      tempcursor++;
-     }
-     else
-     {
-      lcd.print(clockArray[0][minutesModule]); 
-      tempcursor += 2;
-     }
-     
-     lcd.setCursor(tempcursor,1);
-     lcd.print(":");
-     tempcursor++;
-     lcd.setCursor(tempcursor,1);
-     
-     if(secondsModule < 10)
-     {
-      lcd.print("0"); 
-      tempcursor++; 
-      lcd.setCursor(tempcursor,1);
-      lcd.print(clockArray[0][secondsModule]);
-      tempcursor++;
-     }
-     else
-     {
-      lcd.print(clockArray[0][secondsModule]); 
-      tempcursor += 2;
-     }
-     
-   }
-
-   else if(lcdmenu == 2)
-   {
-      lcd.setCursor(tempcursor,1);
-      if(maxChicken < 10 && maxChicken > -1)
-       {
-        lcd.print("0"); 
-        tempcursor++; 
-        lcd.setCursor(tempcursor,1);
-        lcd.print(maxChicken);
-        tempcursor++;
-       }
-       else
-       {
-        lcd.print(maxChicken);
-        tempcursor += 2;
-       }
-      lcd.print("                   ");
-   }
-}
-
-void moveMotor(char command){
-  if(command == 'u'){
-   //Set relais to go up
-   digitalWrite(relaisA, HIGH);
-   digitalWrite(relaisB, LOW);
-   doorLowering = false;
+        break;
+      }
+    case btnDOWN:
+      {
+        switch(lcdmenu)
+        {
+          case 0:
+          {
+            //Decrement clock value at selected position
+            lcd.setCursor(cursorposition, 1);
+            if (cursorposition >= 0 && cursorposition <= 3)
+            {
+              hoursClose--;
+            }
+            else if (cursorposition > 3 && cursorposition <= 7)
+            {
+              minutesClose--;
+            }
+            else if (cursorposition > 7 && cursorposition <= 11)
+            {
+              hoursOpen--;
+            }
+            else if (cursorposition > 11 && cursorposition <= 15)
+            {
+              minutesOpen--;
+            }
+            break;
+          }
+          case 1:
+          {
+            //Decrement clock value at selected position
+            lcd.setCursor(cursorposition, 1);
+            if (cursorposition >= 0 && cursorposition <= 7)
+            {
+              hoursClock--;
+            }
+            else if (cursorposition > 7 && cursorposition <= 15)
+            {
+              minutesClock--;
+            }
+            break;
+          }
+		  //Decrement max chicken value
+          case 2:
+          {
+            maxChicken--;
+            if (maxChicken <= 0) {
+              maxChicken = 0;
+            }
+            delay(500);
+            break;
+          }
+          case 3:
+          {
+			//CREATe DOOR STATES MANUALLY
+            if(doorLowering)
+            {
+              doorRaising = false;
+              doorLowering = false;
+            }
+            else if(!doorLowering)
+            {
+              doorRaising = true;
+              doorLowering = false;
+              Serial.println("SET doorRaising true");
+            }
+            break;
+          }
+        }
+        setClockValues();
+        break;
+      }
+    case btnSELECT:
+      {
+        switch(lcdmenu)
+        {
+          case 0:
+          {
+            if (timeSet) {
+              setHoursClose = 0;
+              setMinutesClose = 0;
+              setHoursOpen = 0;
+              setMinutesOpen = 0;
+              timeSet = false;
+              changeMenu = false;
+              delay(1000);
+            }
+            else
+            {
+              setHoursClose = clockArray[hoursClose][0];
+              setMinutesClose = clockArray[0][minutesClose];
+              setHoursOpen = clockArray[hoursOpen][0];
+              setMinutesOpen = clockArray[0][minutesOpen];
+              timeSet = true;
+              changeMenu = true;
+              delay(1000);
+            }
+            break;
+          }
+          case 1:
+          {
+             if (clockSet) {
+              hoursClock = hoursModule;
+              minutesClock = minutesModule;
+              clockSet = false;
+              changeMenu = false;
+              delay(1000);
+            }
+            else
+            {
+              Clock.setHour(hoursClock);
+              Clock.setMinute(minutesClock);
+              clockSet = true;
+              changeMenu = true;
+              delay(1000);
+            }
+            break;
+          }
+          case 2:
+          {
+            if (chickenSet) {
+              maxChicken = 0;
+              chickenSet = false;
+              changeMenu = false;
+              delay(1000);
+            }
+            else
+            {
+              setChicken = maxChicken;
+              chickenSet = true;
+              changeMenu = true;
+              delay(1000);
+            }
+            break;
+          }
+          case 3:
+          {
+            if (manualMovement) 
+            {
+              changeMenu = true;
+			  doorLowering = false;
+			  doorRaising = false;
+              delay(1000);
+            }
+            else
+            {
+              manualMovement = true;
+              changeMenu = false;
+              delay(1000);
+            }
+            break;
+          }
+        }
+        break;
+      }
+    case btnNONE:
+      {
+        setClockValues();
+        break;
+      }
   }
-  else if(command == 'd'){
+}
+
+void setClockValues() {
+  //Correcting faulty values
+  if (minutesClose > 59) {
+    hoursClose++;
+    minutesClose = 0;
+  }
+  if (minutesClose < 0) {
+    hoursClose--;
+    minutesClose = 59;
+  }
+  if (hoursClose > 23) {
+    hoursClose = 0;
+  }
+  if (hoursClose < 0) {
+    hoursClose = 23;
+  }
+
+  if (minutesOpen > 59) {
+    hoursOpen++;
+    minutesOpen = 0;
+  }
+  if (minutesOpen < 0) {
+    hoursOpen--;
+    minutesOpen = 59;
+  }
+  if (hoursOpen > 23) {
+    hoursOpen = 0;
+  }
+  if (hoursOpen < 0) {
+    hoursOpen = 23;
+  }
+
+  if (minutesClock > 59) {
+    hoursClock++;
+    minutesClock = 0;
+  }
+  if (minutesClock < 0) {
+    hoursClock--;
+    minutesClock = 59;
+  }
+  if (hoursClock > 23) {
+    hoursClock = 0;
+  }
+  if (hoursClock < 0) {
+    hoursClock = 23;
+  }
+
+  tempcursor = 0;
+  switch (lcdmenu)
+  {
+	  case 0:
+	  {
+		  /*SETTING VALUES CLOSING TIME */
+		  lcd.setCursor(tempcursor, 1);
+		  if (hoursClose < 10 && hoursClose > -1)
+		  {
+			  lcd.print("0");
+			  tempcursor++;
+			  lcd.setCursor(tempcursor, 1);
+			  lcd.print(clockArray[hoursClose][0]);
+			  tempcursor++;
+		  }
+		  else
+		  {
+			  lcd.print(clockArray[hoursClose][0]);
+			  tempcursor += 2;
+		  }
+
+		  lcd.setCursor(tempcursor, 1);
+		  lcd.print(":");
+		  tempcursor++;
+		  lcd.setCursor(tempcursor, 1);
+		  if (minutesClose < 10)
+		  {
+			  lcd.print("0");
+			  tempcursor++;
+			  lcd.setCursor(tempcursor, 1);
+			  lcd.print(clockArray[0][minutesClose]);
+			  tempcursor++;
+		  }
+		  else
+		  {
+			  lcd.print(clockArray[0][minutesClose]);
+			  tempcursor += 2;
+		  }
+		  lcd.print("cl");
+		  tempcursor += 2;
+		  lcd.print("  ");
+		  tempcursor += 2;
+
+		  /*SETTING VALUES OPENING TIME */
+		  lcd.setCursor(tempcursor, 1);
+		  if (hoursOpen < 10 && hoursOpen > -1)
+		  {
+			  lcd.print("0");
+			  tempcursor++;
+			  lcd.setCursor(tempcursor, 1);
+			  lcd.print(clockArray[hoursOpen][0]);
+			  tempcursor++;
+		  }
+		  else
+		  {
+			  lcd.print(clockArray[hoursOpen][0]);
+			  tempcursor += 2;
+		  }
+		  lcd.setCursor(tempcursor, 1);
+		  lcd.print(":");
+		  tempcursor++;
+		  lcd.setCursor(tempcursor, 1);
+		  if (minutesOpen < 10)
+		  {
+			  lcd.print("0");
+			  tempcursor++;
+			  lcd.setCursor(tempcursor, 1);
+			  lcd.print(clockArray[0][minutesOpen]);
+			  tempcursor++;
+		  }
+		  else
+		  {
+			  lcd.print(clockArray[0][minutesOpen]);
+			  tempcursor += 2;
+		  }
+		  lcd.print("op");
+		  tempcursor += 2;
+		  break;
+	  }
+	  case 1:
+	  {
+		  lcd.setCursor(tempcursor, 1);
+		  if (hoursClock < 10 && hoursClock > -1)
+		  {
+			  lcd.print("0");
+			  tempcursor++;
+			  lcd.setCursor(tempcursor, 1);
+			  lcd.print(clockArray[hoursClock][0]);
+			  tempcursor++;
+		  }
+		  else
+		  {
+			  lcd.print(clockArray[hoursClock][0]);
+			  tempcursor += 2;
+		  }
+		  lcd.setCursor(tempcursor, 1);
+		  lcd.print(":");
+		  tempcursor++;
+		  lcd.setCursor(tempcursor, 1);
+		  if (minutesClock < 10)
+		  {
+			  lcd.print("0");
+			  tempcursor++;
+			  lcd.setCursor(tempcursor, 1);
+			  lcd.print(clockArray[0][minutesClock]);
+			  tempcursor++;
+		  }
+		  else
+		  {
+			  lcd.print(clockArray[0][minutesClock]);
+			  tempcursor += 2;
+		  }
+		  lcd.print("   ");
+		  tempcursor += 3;
+		  if (hoursModule < 10 && hoursModule > -1)
+		  {
+			  lcd.print("0");
+			  tempcursor++;
+			  lcd.setCursor(tempcursor, 1);
+			  lcd.print(hoursModule);
+			  tempcursor++;
+		  }
+		  else
+		  {
+			  lcd.print(clockArray[hoursModule][0]);
+			  tempcursor += 2;
+		  }
+		  lcd.setCursor(tempcursor, 1);
+		  lcd.print(":");
+		  tempcursor++;
+		  lcd.setCursor(tempcursor, 1);
+
+		  if (minutesModule < 10)
+		  {
+			  lcd.print("0");
+			  tempcursor++;
+			  lcd.setCursor(tempcursor, 1);
+			  lcd.print(clockArray[0][minutesModule]);
+			  tempcursor++;
+		  }
+		  else
+		  {
+			  lcd.print(clockArray[0][minutesModule]);
+			  tempcursor += 2;
+		  }
+
+		  lcd.setCursor(tempcursor, 1);
+		  lcd.print(":");
+		  tempcursor++;
+		  lcd.setCursor(tempcursor, 1);
+
+		  if (secondsModule < 10)
+		  {
+			  lcd.print("0");
+			  tempcursor++;
+			  lcd.setCursor(tempcursor, 1);
+			  lcd.print(clockArray[0][secondsModule]);
+			  tempcursor++;
+		  }
+		  else
+		  {
+			  lcd.print(clockArray[0][secondsModule]);
+			  tempcursor += 2;
+		  }
+		  break;
+	  }
+	  case 2:
+	  {
+		  lcd.setCursor(tempcursor, 1);
+		  if (maxChicken < 10 && maxChicken > -1)
+		  {
+			  lcd.print("0");
+			  tempcursor++;
+			  lcd.setCursor(tempcursor, 1);
+			  lcd.print(maxChicken);
+			  tempcursor++;
+		  }
+		  else
+		  {
+			  lcd.print(maxChicken);
+			  tempcursor += 2;
+		  }
+		  lcd.print("                ");
+		  break;
+	  }
+	  case 3:
+	  {
+		  lcd.setCursor(tempcursor, 1);
+		  if(doorLowering)
+      {
+        lcd.print("Door is lowering      ");
+      }
+      else if(doorRaising)
+      {
+        lcd.print("Door is raising       ");
+      }
+      else
+      {
+        lcd.print("Door is stopped          ");
+      }
+		  break;
+	  }
+  }
+}
+
+void moveMotor(char command) {
+  if (command == 'u') {
+    //Set relais to go up
+    digitalWrite(relaisA, HIGH);
+    digitalWrite(relaisB, LOW);
+    doorLowering = false;
+  }
+  else if (command == 'd') {
     //set relais to go down
     digitalWrite(relaisA, LOW);
     digitalWrite(relaisB, HIGH);
     doorLowering = true;
   }
-  else if(command == 's'){
+  else if (command == 's') {
     //Set relais to stop
     digitalWrite(relaisA, LOW);
     digitalWrite(relaisB, LOW);
@@ -1087,37 +1253,70 @@ void moveMotor(char command){
   }
 }
 
-boolean limitSwitchTriggeredTop(){
-  boolean triggered = false; 
-  analogRead(limitSwitchTop);
+boolean limitSwitchTriggeredTop() {
+  boolean triggered = false;
+  digitalRead(limitSwitchTop);
 
-  if(limitSwitchTop >= LIMIT_SWITCH_TRIGGER_VALUE)
+  if (limitSwitchTop >= LIMIT_SWITCH_TRIGGER_VALUE)
   {
-    triggered = true;
+	triggered = true;
+  }
+  else
+  {
+	triggered = false;
   }
   return triggered;
 }
 
-void correctingInitialClockValues(){
-   if(minutesClose == 60) { minutesClose = 0;}
-   if(hoursClose == 24) { hoursClose = 0;}
-   if(minutesOpen == 60) { minutesOpen = 0;}
-   if(hoursOpen == 24) { hoursOpen = 0;}
-   if(minutesClock == 60) { minutesOpen = 0;}
-   if(hoursClock == 24) { hoursOpen = 0;}
+void correctingInitialClockValues() {
+  if (minutesClose == 60) {
+    minutesClose = 0;
+  }
+  if (hoursClose == 24) {
+    hoursClose = 0;
+  }
+  if (minutesOpen == 60) {
+    minutesOpen = 0;
+  }
+  if (hoursOpen == 24) {
+    hoursOpen = 0;
+  }
+  if (minutesClock == 60) {
+    minutesOpen = 0;
+  }
+  if (hoursClock == 24) {
+    hoursOpen = 0;
+  }
 }
 
-void initClockArray(){
-  for(int h = 0; h < 24; h++){
-      clockArray[h][0] = h;
+void initClockArray() {
+  for (int h = 0; h < 24; h++) {
+    clockArray[h][0] = h;
   }
-  for(int m = 0; m < 60; m++){
-      clockArray[0][m] = m;
+  for (int m = 0; m < 60; m++) {
+    clockArray[0][m] = m;
   }
 }
 
-void menustate(){
-        if(lcdmenu == 0 && timeSet == false){changeMenu = false;}else if(lcdmenu == 0 && timeSet == true){changeMenu = true;}
-        if(lcdmenu == 1 && clockSet == false){changeMenu = false;}else if(lcdmenu == 0 && clockSet == true){changeMenu = true;}
-        if(lcdmenu == 2 && chickenSet == false){changeMenu = false;}else if(lcdmenu == 0 && chickenSet == true){changeMenu = true;}
+void menustate() {
+  if (lcdmenu == 0 && timeSet == false) {
+    changeMenu = false;
+  } else if (lcdmenu == 0 && timeSet == true) {
+    changeMenu = true;
+  }
+  if (lcdmenu == 1 && clockSet == false) {
+    changeMenu = false;
+  } else if (lcdmenu == 0 && clockSet == true) {
+    changeMenu = true;
+  }
+  if (lcdmenu == 2 && chickenSet == false) {
+    changeMenu = false;
+  } else if (lcdmenu == 0 && chickenSet == true) {
+    changeMenu = true;
+  }
+  if (lcdmenu == 3 && manualMovement == false) {
+    changeMenu = true;
+  } else if (lcdmenu == 3 && manualMovement == true) {
+    changeMenu = false;
+  }
 }
