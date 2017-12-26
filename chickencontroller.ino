@@ -83,8 +83,8 @@ boolean doorUp = false;
 boolean doorDown = false;
 int interruptOverflowCounter = 0;
 int interruptOverflowCounterPrev = 0;
-int doorClosingDuration = 50;
-boolean firstLoweringIteration = true;
+int doorClosingDuration = 3;
+boolean startLoweringCountdown = true;
 boolean manualMovement = false;
 
 //LCD Variables
@@ -128,9 +128,15 @@ void setup()
   Wire.begin();
   setClockModule();
   setPinModes();
+  setupInterrupts();
   
-  cli();//stop interrupts
+  Serial.println("Setup complete");
+}
 
+void setupInterrupts()
+{
+  noInterrupts();
+  //cli();//stop interrupts
   //set timer1 interrupt to 1Hz
   TCCR1A = 0;// Timmerregister TCCR1A set to 0
   TCCR1B = 0;// Timmerregister TCCR1B set to 0
@@ -139,19 +145,16 @@ void setup()
   OCR1A = 15624;// = (16*10^6) / (1024*1) - 1 (muss < 65536 sein)
   // Timer mode: CTC mode
   TCCR1B |= (1 << WGM12);
-  // set CS12 und CS10 bits for prescaler 64
-  TCCR1B |= (1 << CS11) | (1 << CS10);
+  // set CS10 bits for prescaler 1
+  TCCR1B |= (1 << CS10);
   // activate timer compare interrupt
   TIMSK1 |= (1 << OCIE1A);
-
-  sei();//allow interrupts
-  
-  Serial.println("Setup complete");
+  //sei();//allow interrupts
 }
 
 // Timer2 creates interrupt every 3s
 ISR(TIMER1_COMPA_vect) {
-  TCNT5 = 0;        // Setzen des Zählregisters auf 0
+  TCNT5 = 0;        // Set Countregister to 0
   interruptOverflowCounter++;
   if(interruptOverflowCounter >= 50000)
   {
@@ -242,26 +245,28 @@ void updateTimeReached()
 
 void motorControl()
 {
+  int tempvalueswap;
   doorUp = limitSwitchTriggeredTop();
-
-/*
+  
   if (doorLowering)
   {
-    if (firstLoweringIteration)
+    if (startLoweringCountdown == false)
     {
+      interrupts();
       interruptOverflowCounterPrev = interruptOverflowCounter;
-      firstLoweringIteration = false;
+      startLoweringCountdown = true;
     }
 
     if (interruptOverflowCounterPrev + doorClosingDuration >= interruptOverflowCounter)
     {
       moveMotor('s');
+      noInterrupts();
       interruptOverflowCounter = 0;
-      Serial.println("door stopping downwards");
-      firstLoweringIteration = true;
+      Serial.println("door stopping downwards(endtime reached)");
+      startLoweringCountdown = true;
     }
   }
- */
+
 
   if (!manualMovement)
   {
@@ -975,6 +980,13 @@ void keytrigger()
     case btnNONE:
       {
         setClockValues();
+
+        if(lcdmenu == 3)
+        {
+          doorLowering = false;
+          doorRaising = false;
+        }
+        
         break;
       }
   }
