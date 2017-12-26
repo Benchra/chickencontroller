@@ -248,28 +248,28 @@ void motorControl()
   int tempvalueswap;
   doorUp = limitSwitchTriggeredTop();
   
-  if (doorLowering)
-  {
-    if (startLoweringCountdown == false)
-    {
-      interrupts();
-      interruptOverflowCounterPrev = interruptOverflowCounter;
-      startLoweringCountdown = true;
-    }
-
-    if (interruptOverflowCounterPrev + doorClosingDuration >= interruptOverflowCounter)
-    {
-      moveMotor('s');
-      noInterrupts();
-      interruptOverflowCounter = 0;
-      Serial.println("door stopping downwards(endtime reached)");
-      startLoweringCountdown = true;
-    }
-  }
-
-
+  
   if (!manualMovement)
   {
+    if (doorLowering)
+    {
+      if (startLoweringCountdown == false)
+      {
+        interrupts();
+        interruptOverflowCounterPrev = interruptOverflowCounter;
+        startLoweringCountdown = true;
+      }
+  
+      if (interruptOverflowCounterPrev + doorClosingDuration >= interruptOverflowCounter)
+      {
+        moveMotor('s');
+        noInterrupts();
+        interruptOverflowCounter = 0;
+        Serial.println("door stopping downwards(endtime reached)");
+        startLoweringCountdown = false;
+      }
+    }
+    
 	  if (doorLowering) //if motor is lowering
 	  {
 		  if (state != 0)
@@ -807,12 +807,7 @@ void keytrigger()
           }
           case 3:
           {
-            if(doorRaising)
-            {
-              doorRaising = false;
-              doorLowering = false;
-            }
-            else if(!doorRaising)
+            if(!doorRaising)
             {
               doorRaising = true;
               doorLowering = false;
@@ -877,12 +872,7 @@ void keytrigger()
           case 3:
           {
 			//CREATe DOOR STATES MANUALLY
-            if(doorLowering)
-            {
-              doorRaising = false;
-              doorLowering = false;
-            }
-            else if(!doorLowering)
+            if(!doorLowering)
             {
               doorRaising = true;
               doorLowering = false;
@@ -962,8 +952,9 @@ void keytrigger()
             if (manualMovement) 
             {
               changeMenu = true;
-			  doorLowering = false;
-			  doorRaising = false;
+              manualMovement = false;
+			        doorLowering = false;
+			        doorRaising = false;
               delay(1000);
             }
             else
