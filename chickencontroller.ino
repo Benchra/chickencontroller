@@ -22,6 +22,7 @@
 #define MIN_DISPLAY_LENGTH 0
 #define LIMIT_SWITCH_TRIGGER_VALUE 1 //need to check
 #define MAX_MENU 3
+#define DOOR_CLOSING_DURATION 3
 
 boolean testrun = false;
 
@@ -55,6 +56,11 @@ boolean hourformat = false;
 boolean PM = false;
 boolean openingTimeReached = false;
 boolean closingTimeReached = false;
+int currentDoorClosingDuration = 0;
+int targetDoorClosingDuration = 0;
+int prevseconds = 61;
+int seconds = 61;
+int layoverseconds = 0;
 
 //Chicken Variables
 int setChicken = 0;
@@ -73,8 +79,8 @@ boolean backTriggered = false;
 boolean frontEntry = false;
 boolean backEntry = false;
 const int VAL_DELAY = 25;
-const int VAL_TRIGGER_FRONT = -200;
-const int VAL_TRIGGER_BACK = -100;
+int VAL_TRIGGER_FRONT = -500;
+int VAL_TRIGGER_BACK = -500;
 
 //Motor/door variables
 boolean doorLowering = false;
@@ -83,8 +89,7 @@ boolean doorUp = false;
 boolean doorDown = false;
 int interruptOverflowCounter = 0;
 int interruptOverflowCounterPrev = 0;
-int doorClosingDuration = 3;
-boolean startLoweringCountdown = true;
+boolean startLoweringCountdown = false;
 boolean manualMovement = false;
 unsigned int limitSwitchTopValue = 0;
 
@@ -203,13 +208,6 @@ void loop() {
   {
     updateIRValues();
   }
-  /*DISPLAY SENSOR VALUES FOR DEBUGGING */
-  if (dataOutput == 'S') 
-  {
-	  Serial.print( "FRONT: ");Serial.println(VAL_DIFF_FRONT);
-	  Serial.print( "BACK: ");Serial.println(VAL_DIFF_BACK);
-  }
-
 
   //IR Logic
   createStates();
@@ -236,7 +234,7 @@ void updateTimeReached()
       }
       else
       {
-        Serial.println("Opening Time Reached");
+        //Serial.println("Opening Time Reached");
   			openingTimeReached = true;
   			closingTimeReached = false;
       }
@@ -256,91 +254,58 @@ void updateTimeReached()
 
 void motorControl()
 {
-  int tempvalueswap;
-  doorUp = limitSwitchTriggeredTop();
+  doorUp = limitSwitchTriggeredTop(); //read limitSwitch
   
   if (!manualMovement)
   {
+    //Stopping Conditions
     if (doorLowering)
     {
-      if (startLoweringCountdown == false)
-      {
-        interrupts();
-        interruptOverflowCounterPrev = interruptOverflowCounter;
-        startLoweringCountdown = true;
-      }
-  
-      if (interruptOverflowCounterPrev + doorClosingDuration >= interruptOverflowCounter)
+      if (state != 0)
       {
         moveMotor('s');
-        noInterrupts();
-        interruptOverflowCounter = 0;
-        Serial.println("door stopping downwards(endtime reached)");
-        startLoweringCountdown = false;
+        Serial.println("´MOTOR CONTROL: WARNING Time Reached but Object in barrier");
+      }
+      if (loweringDurationReached())
+      {
+        moveMotor('s');
+        Serial.println("´MOTOR CONTROL: door stopping downwards(endtime reached)");
       }
     }
-    
-	  if (doorLowering) //if motor is lowering
-	  {
-		  if (state != 0)
-		  {
-			  moveMotor('s');
-			  Serial.println("´MOTOR CONTROL: stopping motor");
-		  }
-	  }
-	  else if (limitSwitchTriggeredTop())
-	  {
-		  moveMotor('s');
-		  doorUp = true;
-		  //Serial.println("´MOTOR CONTROL: motor triggered limitswitch");
-	  }
-
+    if (doorRaising)
+    {
+      if (doorUp)
+      {
+        moveMotor('s');
+        Serial.println("´MOTOR CONTROL: stopping motor because door already at the top position");
+      }
+    }
 
 	  if (timeSet && clockSet) 
 	  {
 		  updateTimeReached();
 		  if (openingTimeReached)
 		  {
-      Serial.println("TEST");
-			  if (doorUp)
-			  {
-				  moveMotor('s');
-				  doorLowering = false;
-          doorRaising = false;
-				  Serial.println("MOTOR CONTROL: stopping motor because door already at the top position");
-			  }
-			  else
-			  {
-				  moveMotor('u');
-				  doorLowering = false;
-          doorRaising = true;
-				  Serial.println("MOTOR CONTROL: raising door");
-			  }
+        if(!doorUp)
+        {
+  			  moveMotor('u');
+  			  Serial.println("MOTOR CONTROL: raising door");
+        }
 		  }
-		  else if (closingTimeReached && chickencounter >= maxChicken)
+		  else if (closingTimeReached)
 		  {
-			  if (state == 0) //only lower if nothing in door
-			  {
-				  if (doorUp)
-				  {
-					  moveMotor('d');
-					  doorLowering = true;
-            doorRaising = false;
-					  Serial.println("MOTOR CONTROL: lowering motor because time was reached and all Chicken in coop");
-				  }
-				  else if(!doorUp)
-				  {
-					  moveMotor('s');
-					  doorLowering = false;
-            doorRaising = false;
-					  Serial.println("MOTOR CONTROL: stopping motor because door already at the bottom position");
-				  }
-			  }
-			  else if (state != 0)
-			  {
-
-				  Serial.println("´MOTOR CONTROL: WARNING Time Reached but barrier not free");
-			  }
+        if(chickencounter >= maxChicken)
+        {
+          if(state == 0)
+          {
+    		    moveMotor('d');
+    		    Serial.println("´MOTOR CONTROL: lowering motor because time was reached and all Chicken in coop");
+          }
+        }
+        else
+        {
+          Serial.println("´MOTOR CONTROL: WARNING Time Reached but not all Chicken in Coop");
+        }
 		  }
 	  }
   }
@@ -353,7 +318,7 @@ void motorControl()
 	  }
 	  else if (doorRaising)
 	  {
-      if(doorUp)
+      if(limitSwitchTriggeredTop())
       {
         moveMotor('s');
       }
@@ -366,7 +331,6 @@ void motorControl()
 	  else
 	  {
 		  moveMotor('s');
-		  //Serial.println("´MOTOR CONTROL: stopping motor");
 	  }
   }
 }
@@ -396,9 +360,9 @@ void updateIRValues()
 
   if ( dataOutput == 'S') {
     Serial.print("Front IR Value: ");
-    Serial.print(VAL_RECV_HIGH_FRONT);
+    Serial.print(VAL_DIFF_FRONT);
     Serial.print(" Back IR Value: ");
-    Serial.println(VAL_RECV_HIGH_BACK);
+    Serial.println(VAL_DIFF_BACK);
   }
   /* FRONT/BACK BARRIER RX/TX END */
 }
@@ -1357,3 +1321,38 @@ void menustate() {
     changeMenu = false;
   }
 }
+
+boolean loweringDurationReached()
+{
+  boolean reached = false;
+  
+  if (startLoweringCountdown == false) //set stuff only at the first call until the duration is reached
+  {
+    startLoweringCountdown = true;
+  }
+
+  if(startLoweringCountdown)
+  {
+    if(getCurrentDoorClosingDuration()  >= DOOR_CLOSING_DURATION)
+    {
+      reached = true;
+      seconds = 61;
+      prevseconds = 61;
+      layoverseconds = 0;
+      startLoweringCountdown = false;
+    }
+  }
+  return reached;
+}
+
+int getCurrentDoorClosingDuration()
+{
+  seconds = Clock.getSecond();
+  if(seconds != prevseconds)
+  {
+    layoverseconds++;
+  }
+  prevseconds = seconds;
+  return layoverseconds;
+}
+
