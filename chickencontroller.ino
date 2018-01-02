@@ -86,12 +86,13 @@ int interruptOverflowCounterPrev = 0;
 int doorClosingDuration = 3;
 boolean startLoweringCountdown = true;
 boolean manualMovement = false;
+unsigned int limitSwitchTopValue = 0;
 
 //LCD Variables
 int lcd_key     = 0;
 int adc_key_in  = 0;
 int cursorposition = 0;
-int lcdmenu = 3;				// 0: time open/close set; 1: time current set(clock module); 2: maxChicken set; 3:Control Motor Manually
+int lcdmenu = 0;				// 0: time open/close set; 1: time current set(clock module); 2: maxChicken set; 3:Control Motor Manually
 boolean changeMenu = false;		// change behaviour of right/left
 boolean chickenSet = false;		// amount of chicken
 boolean clockSet = false;		// lcd clock time
@@ -128,7 +129,7 @@ void setup()
   Wire.begin();
   setClockModule();
   setPinModes();
-  setupInterrupts();
+  //setupInterrupts();
   
   Serial.println("Setup complete");
 }
@@ -156,7 +157,7 @@ void setupInterrupts()
 ISR(TIMER1_COMPA_vect) {
   TCNT5 = 0;        // Set Countregister to 0
   interruptOverflowCounter++;
-  if(interruptOverflowCounter >= 50000)
+  if(interruptOverflowCounter >= 3)
   {
     interruptOverflowCounter = 0;
   }
@@ -179,7 +180,8 @@ void setPinModes()
   pinMode(txPinIRBack, OUTPUT);
   pinMode(relaisA, OUTPUT);
   pinMode(relaisB, OUTPUT);
-  pinMode(limitSwitchTop, INPUT);
+  //pinMode(limitSwitchTop, INPUT);
+  pinMode(limitSwitchTop, INPUT_PULLUP);
 }
 
 void getClockValues()
@@ -227,10 +229,19 @@ void updateTimeReached()
 	{
 		if (hoursOpen == hoursModule && minutesOpen == minutesModule)
 		{
-			openingTimeReached = true;
-			closingTimeReached = false;
+      if(doorUp)
+      {
+        openingTimeReached = false;
+        closingTimeReached = false;
+      }
+      else
+      {
+        Serial.println("Opening Time Reached");
+  			openingTimeReached = true;
+  			closingTimeReached = false;
+      }
 		}
-		if (hoursClose == hoursModule && minutesClose == minutesModule)
+		else if (hoursClose == hoursModule && minutesClose == minutesModule)
 		{
 			openingTimeReached = false;
 			closingTimeReached = true;
@@ -247,7 +258,6 @@ void motorControl()
 {
   int tempvalueswap;
   doorUp = limitSwitchTriggeredTop();
-  
   
   if (!manualMovement)
   {
@@ -282,7 +292,7 @@ void motorControl()
 	  {
 		  moveMotor('s');
 		  doorUp = true;
-		  Serial.println("´MOTOR CONTROL: motor triggered limitswitch");
+		  //Serial.println("´MOTOR CONTROL: motor triggered limitswitch");
 	  }
 
 
@@ -291,16 +301,19 @@ void motorControl()
 		  updateTimeReached();
 		  if (openingTimeReached)
 		  {
+      Serial.println("TEST");
 			  if (doorUp)
 			  {
 				  moveMotor('s');
 				  doorLowering = false;
+          doorRaising = false;
 				  Serial.println("MOTOR CONTROL: stopping motor because door already at the top position");
 			  }
-			  else if (!doorUp)
+			  else
 			  {
 				  moveMotor('u');
 				  doorLowering = false;
+          doorRaising = true;
 				  Serial.println("MOTOR CONTROL: raising door");
 			  }
 		  }
@@ -312,12 +325,14 @@ void motorControl()
 				  {
 					  moveMotor('d');
 					  doorLowering = true;
+            doorRaising = false;
 					  Serial.println("MOTOR CONTROL: lowering motor because time was reached and all Chicken in coop");
 				  }
 				  else if(!doorUp)
 				  {
 					  moveMotor('s');
 					  doorLowering = false;
+            doorRaising = false;
 					  Serial.println("MOTOR CONTROL: stopping motor because door already at the bottom position");
 				  }
 			  }
@@ -338,13 +353,20 @@ void motorControl()
 	  }
 	  else if (doorRaising)
 	  {
-		  moveMotor('u');
-		  Serial.println("´MOTOR CONTROL: raising motor");
+      if(doorUp)
+      {
+        moveMotor('s');
+      }
+      else
+      {
+		    moveMotor('u');
+		    Serial.println("´MOTOR CONTROL: raising motor");
+      }
 	  }
 	  else
 	  {
 		  moveMotor('s');
-		  Serial.println("´MOTOR CONTROL: stopping motor");
+		  //Serial.println("´MOTOR CONTROL: stopping motor");
 	  }
   }
 }
@@ -874,9 +896,9 @@ void keytrigger()
 			//CREATe DOOR STATES MANUALLY
             if(!doorLowering)
             {
-              doorRaising = true;
-              doorLowering = false;
-              Serial.println("SET doorRaising true");
+              doorRaising = false;
+              doorLowering = true;
+              Serial.println("SET doorLowering true");
             }
             break;
           }
@@ -1241,32 +1263,44 @@ void moveMotor(char command) {
     digitalWrite(relaisA, HIGH);
     digitalWrite(relaisB, LOW);
     doorLowering = false;
+    doorRaising = true;
   }
   else if (command == 'd') {
     //set relais to go down
     digitalWrite(relaisA, LOW);
     digitalWrite(relaisB, HIGH);
     doorLowering = true;
+    doorRaising = false;
   }
   else if (command == 's') {
     //Set relais to stop
     digitalWrite(relaisA, LOW);
     digitalWrite(relaisB, LOW);
     doorLowering = false;
+    doorRaising = false;
   }
 }
 
 boolean limitSwitchTriggeredTop() {
   boolean triggered = false;
-  digitalRead(limitSwitchTop);
-
-  if (limitSwitchTop >= LIMIT_SWITCH_TRIGGER_VALUE)
+  limitSwitchTopValue = digitalRead(limitSwitchTop);
+  if (limitSwitchTopValue == 0)
   {
-	triggered = true;
+    limitSwitchTopValue = 1;
+  }
+  else if(limitSwitchTopValue ==1)
+  {
+    limitSwitchTopValue =0;
+  }
+  //Serial.println(limitSwitchTopValue);
+  
+  if (limitSwitchTopValue >= LIMIT_SWITCH_TRIGGER_VALUE)
+  {
+	  triggered = true;
   }
   else
   {
-	triggered = false;
+	  triggered = false;
   }
   return triggered;
 }
