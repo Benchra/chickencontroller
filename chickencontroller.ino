@@ -22,7 +22,7 @@
 #define MIN_DISPLAY_LENGTH 0
 #define LIMIT_SWITCH_TRIGGER_VALUE 1 //need to check
 #define MAX_MENU 3
-#define DOOR_CLOSING_DURATION 3
+#define DOOR_CLOSING_DURATION 4
 
 boolean testrun = false;
 
@@ -183,9 +183,9 @@ void setPinModes()
   pinMode(txPinIRFront, OUTPUT);
   pinMode(rxPinIRBack, INPUT);
   pinMode(txPinIRBack, OUTPUT);
+  TCCR3B = TCCR3B & B11111000 | B00000001; // set timer 3 divisor to 1
   pinMode(relaisA, OUTPUT);
   pinMode(relaisB, OUTPUT);
-  //pinMode(limitSwitchTop, INPUT);
   pinMode(limitSwitchTop, INPUT_PULLUP);
 }
 
@@ -339,15 +339,19 @@ void updateIRValues()
 {
   /* FRONT/BACK BARRIER RX/TX START*/
   // Creating Offset Value
-  digitalWrite(txPinIRFront, LOW);
-  digitalWrite(txPinIRBack, LOW);
+  //digitalWrite(txPinIRFront, LOW);
+  //digitalWrite(txPinIRBack, LOW);
+  analogWrite(txPinIRFront, 0);
+  analogWrite(txPinIRBack, 0);
   delay(VAL_DELAY);
   VAL_RECV_OFFSET_FRONT = analogRead(rxPinIRFront);
   VAL_RECV_OFFSET_BACK = analogRead(rxPinIRBack);
 
   //Reading High Value
-  digitalWrite(txPinIRFront, HIGH);
-  digitalWrite(txPinIRBack, HIGH);
+//  digitalWrite(txPinIRFront, HIGH);
+//  digitalWrite(txPinIRBack, HIGH);
+  analogWrite(txPinIRFront, 128);
+  analogWrite(txPinIRBack, 128);
   delay(VAL_DELAY);
   VAL_RECV_HIGH_FRONT = analogRead(rxPinIRFront);
   VAL_RECV_HIGH_BACK = analogRead(rxPinIRBack);
