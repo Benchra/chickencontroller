@@ -73,7 +73,7 @@ int logiccount = 0;
 int chickencounter = 0;
 int trigCountFront = 0;
 int trigCountBack = 0;
-int permittedFault = 2;
+int permittedFault = 4;
 boolean frontTriggered = false;
 boolean backTriggered = false;
 boolean frontEntry = false;
@@ -111,12 +111,13 @@ int VAL_RECV_HIGH_FRONT = 0;
 int VAL_RECV_HIGH_BACK = 0;
 int VAL_DIFF_FRONT = 0;
 int VAL_DIFF_BACK = 0;
+boolean analogIR = false;
 
 // Data output mode:
 // R - raw data
 // T - trigger events
 // S - Sensor Values
-char dataOutput = 'T';
+char dataOutput = 'S';
 
 void setup()
 {
@@ -167,23 +168,31 @@ ISR(TIMER1_COMPA_vect) {
     interruptOverflowCounter = 0;
   }
 }
-
+ 
 
 void setClockModule()
 {
   Clock.setClockMode(false);
+  Clock.setHour(0);
+  Clock.setMinute(0);
+  Clock.setSecond(0);
   minutesModule = Clock.getMinute();
   hoursModule = Clock.getHour(hourformat , PM);
   secondsModule = Clock.getSecond();
+  Serial.print("Time : "); Serial.print(hoursModule); Serial.print(":"); Serial.print(minutesModule); Serial.print(":"); Serial.println(secondsModule);
 }
 
 void setPinModes()
 {
+
+  if(analogIR)
+  {
+    TCCR3B = TCCR3B & B11111000 | B00000001; // set timer 3 divisor to 1
+  }
   pinMode(rxPinIRFront, INPUT);
   pinMode(txPinIRFront, OUTPUT);
   pinMode(rxPinIRBack, INPUT);
   pinMode(txPinIRBack, OUTPUT);
-  TCCR3B = TCCR3B & B11111000 | B00000001; // set timer 3 divisor to 1
   pinMode(relaisA, OUTPUT);
   pinMode(relaisB, OUTPUT);
   pinMode(limitSwitchTop, INPUT_PULLUP);
@@ -194,6 +203,7 @@ void getClockValues()
   minutesModule = Clock.getMinute();
   hoursModule = Clock.getHour(hourformat , PM);
   secondsModule = Clock.getSecond();
+  //Serial.print("Time : "); Serial.print(hoursModule); Serial.print(":"); Serial.print(minutesModule); Serial.print(":"); Serial.println(secondsModule);
 }
 
 void loop() {
@@ -339,29 +349,39 @@ void updateIRValues()
 {
   /* FRONT/BACK BARRIER RX/TX START*/
   // Creating Offset Value
-  //digitalWrite(txPinIRFront, LOW);
-  //digitalWrite(txPinIRBack, LOW);
-  analogWrite(txPinIRFront, 0);
-  analogWrite(txPinIRBack, 0);
+  if(analogIR)
+  {
+    analogWrite(txPinIRFront, 0);
+    analogWrite(txPinIRBack, 0);
+  }
+  else
+  {
+    digitalWrite(txPinIRFront, LOW);
+    digitalWrite(txPinIRBack, LOW);
+  }
   delay(VAL_DELAY);
   VAL_RECV_OFFSET_FRONT = analogRead(rxPinIRFront);
   VAL_RECV_OFFSET_BACK = analogRead(rxPinIRBack);
 
   //Reading High Value
-//  digitalWrite(txPinIRFront, HIGH);
-//  digitalWrite(txPinIRBack, HIGH);
-  analogWrite(txPinIRFront, 128);
-  analogWrite(txPinIRBack, 128);
+  if(analogIR)
+  {
+    analogWrite(txPinIRFront, 255);
+    analogWrite(txPinIRBack, 255);
+  }
+  else
+  {
+    digitalWrite(txPinIRFront, HIGH);
+    digitalWrite(txPinIRBack, HIGH);
+  }
   delay(VAL_DELAY);
   VAL_RECV_HIGH_FRONT = analogRead(rxPinIRFront);
   VAL_RECV_HIGH_BACK = analogRead(rxPinIRBack);
 
-  delay(5);
-
   //Calculate Value Difference
   VAL_DIFF_FRONT = VAL_RECV_HIGH_FRONT - VAL_RECV_OFFSET_FRONT;
   VAL_DIFF_BACK = VAL_RECV_HIGH_BACK - VAL_RECV_OFFSET_BACK;
-
+  
   if ( dataOutput == 'S') {
     Serial.print("Front IR Value: ");
     Serial.print(VAL_DIFF_FRONT);
@@ -573,7 +593,7 @@ void statemachine()
         Serial.println("WARNING: (SKIPPED STATE 1) Object TOO FAST OR 2 OBJECTS");
       }
     }
-    Serial.println(logiccount);
+    //Serial.println(logiccount);
   }
 }
 
@@ -661,7 +681,14 @@ void setInfoRow()
   }
   if (lcdmenu == 3)
   {
-    lcd.print("Manual Motor       ");
+    if(!manualMovement)
+    {
+      lcd.print("Press Select       ");
+    }
+    else
+    {
+      lcd.print("Manual MotorMov  ");
+    }
   }
 }
 
@@ -675,11 +702,11 @@ int read_LCD_buttons()
 
   /*BUTTON THRESHOLD*/
   //Manually read triggervalues for buttons, then added 50
-  if (adc_key_in < 90)   return btnRIGHT;
+  if (adc_key_in < 70)   return btnRIGHT;
   if (adc_key_in < 180)  return btnUP;
   if (adc_key_in < 350)  return btnDOWN;
   if (adc_key_in < 500)  return btnLEFT;
-  if (adc_key_in < 700)  return btnSELECT;
+  if (adc_key_in < 750)  return btnSELECT;
 
   return btnNONE;  // default value
 }
@@ -797,11 +824,14 @@ void keytrigger()
           }
           case 3:
           {
-            if(!doorRaising)
+            if(manualMovement)
             {
-              doorRaising = true;
-              doorLowering = false;
-              Serial.println("SET doorRaising true");
+              if(!doorRaising)
+              {
+                doorRaising = true;
+                doorLowering = false;
+                Serial.println("SET doorRaising true");
+              }
             }
             break;
           }
@@ -862,11 +892,14 @@ void keytrigger()
           case 3:
           {
 			//CREATe DOOR STATES MANUALLY
-            if(!doorLowering)
+            if(manualMovement)
             {
-              doorRaising = false;
-              doorLowering = true;
-              Serial.println("SET doorLowering true");
+              if(!doorLowering)
+              {
+                doorRaising = false;
+                doorLowering = true;
+                Serial.println("SET doorLowering true");
+              }
             }
             break;
           }
